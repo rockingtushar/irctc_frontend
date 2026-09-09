@@ -1,0 +1,6 @@
+{
+  "name": "Train Search & Station Autocomplete",
+  "description": "High-performance IRCTC/ConfirmTkt style train search frontend featuring instant client-side station autocomplete, intelligent 7-day localStorage caching, and accessible keyboard navigation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
