@@ -24,12 +24,12 @@ export function getApiBaseUrl(): string {
   if (envUrl) {
     if (isHttps && (envUrl.startsWith('http://localhost') || envUrl.startsWith('http://127.0.0.1') || envUrl.startsWith('http://'))) {
       // In HTTPS preview, fallback to the devtunnel HTTPS URL
-      return 'http://89.116.122.159';
+      return 'https://irctc-backend-5vpe.onrender.com';
     }
     return envUrl;
   }
 
-  return 'http://89.116.122.159';
+  return 'https://irctc-backend-5vpe.onrender.com';
 }
 
 export function setApiBaseUrl(url: string): void {
