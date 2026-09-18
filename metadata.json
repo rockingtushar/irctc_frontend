@@ -1,0 +1,6 @@
+{
+  "name": "Train Search & Station Autocomplete",
+  "description": "High-performance IRCTC-style train search, real-time running status, PNR status, and online Chart Prepared vacant berth visualization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
