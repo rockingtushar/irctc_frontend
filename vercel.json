@@ -1,6 +1,14 @@
 {
   "rewrites": [
     {
+      "source": "/api/trains/route/:trainNo",
+      "destination": "https://railway-ntes-402829987485.asia-south1.run.app/train/route/:trainNo"
+    },
+    {
+      "source": "/train/route/:trainNo",
+      "destination": "https://railway-ntes-402829987485.asia-south1.run.app/train/route/:trainNo"
+    },
+    {
       "source": "/api/:match*",
       "destination": "https://irctc-backend-1-ge8x.onrender.com/api/:match*"
     },
@@ -10,7 +18,7 @@
     },
     {
       "source": "/train/:match*",
-      "destination": "https://irctc-backend-1-ge8x.onrender.com/train/:match*"
+      "destination": "https://railway-ntes-402829987485.asia-south1.run.app/train/:match*"
     },
     {
       "source": "/health",

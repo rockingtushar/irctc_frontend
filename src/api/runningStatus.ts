@@ -231,11 +231,12 @@ export async function fetchTrainRoute(trainNumber: string): Promise<RunningStatu
   }
 
   const candidateEndpoints = [
+    `https://railway-ntes-402829987485.asia-south1.run.app/train/route/${cleanTrainNo}`,
     `/api/trains/route/${cleanTrainNo}`,
     `/train/route/${cleanTrainNo}`,
     `/train/schedule/${cleanTrainNo}`,
-    ...getCandidateApiUrls(`/api/trains/route/${cleanTrainNo}`),
     ...getCandidateApiUrls(`/train/route/${cleanTrainNo}`),
+    ...getCandidateApiUrls(`/api/trains/route/${cleanTrainNo}`),
     ...getCandidateApiUrls(`/train/schedule/${cleanTrainNo}`),
   ];
 
