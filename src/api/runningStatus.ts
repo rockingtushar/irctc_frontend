@@ -144,11 +144,18 @@ function normalizeRunningStatusData(raw: RunningStatusData): RunningStatusData {
       }
 
       // 3. If arrived at destination / completed journey
+      const destStation = data.stations[data.stations.length - 1];
+      const destCode = destStation?.station_code?.toUpperCase();
+      const destName = destStation?.station_name?.toUpperCase();
+
       if (
         targetIdx === -1 &&
-        (upperStatus.includes('ARRIVED AT') ||
-          upperStatus.includes('DESTINATION') ||
-          upperStatus.includes('JOURNEY FINISHED'))
+        (upperStatus.includes('JOURNEY FINISHED') ||
+          upperStatus.includes('JOURNEY COMPLETED') ||
+          upperStatus.includes('TERMINATED AT') ||
+          (upperStatus.includes('ARRIVED AT') &&
+            ((destCode && upperStatus.includes(destCode)) ||
+              (destName && destName.length > 3 && upperStatus.includes(destName)))))
       ) {
         targetIdx = data.stations.length - 1;
       }

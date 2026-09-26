@@ -76,7 +76,7 @@ export const LiveTrainTrackVisualizer: React.FC<LiveTrainTrackVisualizerProps> =
       if (matchIdx !== -1) return matchIdx;
     }
 
-    // 3. Status text analysis fallback (e.g. "Arrived at LUCKNOW LJN(LJN)" or "Departed from ...")
+    // 3. Status text analysis fallback (e.g. "Departed from MARIPAT(MIU) at 21:04", "Arrived at GZB(GZB)")
     if (status) {
       const upperStatus = status.toUpperCase();
       const codeMatch = status.match(/\(([A-Z0-9]{2,5})\)/i);
@@ -85,7 +85,27 @@ export const LiveTrainTrackVisualizer: React.FC<LiveTrainTrackVisualizerProps> =
         const codeIdx = sortedStations.findIndex((s) => s.station_code?.toUpperCase() === c);
         if (codeIdx !== -1) return codeIdx;
       }
-      if (upperStatus.includes('ARRIVED AT') || upperStatus.includes('JOURNEY FINISHED')) {
+
+      // Match station name in status text
+      for (let i = 0; i < sortedStations.length; i++) {
+        const sName = sortedStations[i].station_name?.toUpperCase();
+        if (sName && sName.length >= 4 && upperStatus.includes(sName)) {
+          return i;
+        }
+      }
+
+      const destStation = sortedStations[sortedStations.length - 1];
+      const destCode = destStation?.station_code?.toUpperCase();
+      const destName = destStation?.station_name?.toUpperCase();
+
+      if (
+        upperStatus.includes('JOURNEY COMPLETED') ||
+        upperStatus.includes('JOURNEY FINISHED') ||
+        upperStatus.includes('TERMINATED AT DESTINATION') ||
+        (upperStatus.includes('ARRIVED AT') &&
+          ((destCode && upperStatus.includes(destCode)) ||
+            (destName && destName.length >= 4 && upperStatus.includes(destName))))
+      ) {
         return sortedStations.length - 1;
       }
     }
@@ -110,12 +130,45 @@ export const LiveTrainTrackVisualizer: React.FC<LiveTrainTrackVisualizerProps> =
     lowerStatus.includes('not started') ||
     lowerStatus.includes('starts from') ||
     lowerStatus.includes('waiting to start');
-  const isCompleted =
-    !isYetToStart &&
-    (currentIndex >= totalStations - 1 ||
-      lowerStatus.includes('arrived at') ||
+
+  const destCode = destinationStation?.station_code?.toLowerCase();
+  const destName = destinationStation?.station_name?.toLowerCase();
+
+  const isCompleted = useMemo(() => {
+    if (isYetToStart || totalStations === 0) return false;
+
+    // Explicit journey finished keywords
+    if (
       lowerStatus.includes('journey finished') ||
-      lowerStatus.includes('terminated'));
+      lowerStatus.includes('journey completed') ||
+      lowerStatus.includes('terminated at destination') ||
+      lowerStatus.includes('has terminated')
+    ) {
+      return true;
+    }
+
+    // Train arrived specifically at destination
+    if (
+      lowerStatus.includes('arrived at') &&
+      ((destCode && lowerStatus.includes(destCode)) ||
+        (destName && destName.length >= 4 && lowerStatus.includes(destName)))
+    ) {
+      return true;
+    }
+
+    // Train reached final station
+    if (currentIndex >= totalStations - 1) {
+      if (
+        lowerStatus.includes('arrived') ||
+        lowerStatus.includes('reached') ||
+        lowerStatus.includes('terminated')
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }, [isYetToStart, totalStations, lowerStatus, destCode, destName, currentIndex]);
 
   const rawRatio = isYetToStart
     ? 0
@@ -126,11 +179,31 @@ export const LiveTrainTrackVisualizer: React.FC<LiveTrainTrackVisualizerProps> =
     : 0;
   const progressPercent = Math.round(rawRatio * 100);
 
-  const displayStatus =
-    rawStatus ||
-    (originStation && destinationStation
-      ? `Running between ${originStation.station_name} and ${destinationStation.station_name}`
-      : 'Live running status active');
+  // Formatted status display that enriches missing station names e.g. "Departed from (CYZ)" -> "Departed from CHIPYANA BUZURG (CYZ)"
+  const displayStatus = useMemo(() => {
+    let clean = rawStatus;
+    if (!clean) {
+      return originStation && destinationStation
+        ? `Running between ${originStation.station_name} and ${destinationStation.station_name}`
+        : 'Live running status active';
+    }
+
+    // Enrich missing station names before parentheses
+    clean = clean.replace(/from\s*\(([A-Z0-9]{2,5})\)/i, (_match, code) => {
+      const stn = sortedStations.find((s) => s.station_code?.toUpperCase() === code.toUpperCase());
+      return stn?.station_name ? `from ${stn.station_name} (${code.toUpperCase()})` : `from (${code.toUpperCase()})`;
+    });
+
+    clean = clean.replace(/at\s*\(([A-Z0-9]{2,5})\)/i, (_match, code) => {
+      const stn = sortedStations.find((s) => s.station_code?.toUpperCase() === code.toUpperCase());
+      return stn?.station_name ? `at ${stn.station_name} (${code.toUpperCase()})` : `at (${code.toUpperCase()})`;
+    });
+
+    // Add space before parentheses like "MARIPAT(MIU)" -> "MARIPAT (MIU)"
+    clean = clean.replace(/([a-zA-Z0-9])\(([A-Z0-9]{2,5})\)/g, '$1 ($2)');
+
+    return clean;
+  }, [rawStatus, originStation, destinationStation, sortedStations]);
 
   // Safe helper to ensure no "null", "undefined", "NaN" is shown
   const safeText = (val: string | null | undefined): string | null => {
