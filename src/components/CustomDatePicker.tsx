@@ -19,7 +19,6 @@ export const CustomDatePicker: React.FC<CustomDatePickerProps> = ({
   disabled = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [openUpward, setOpenUpward] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Parse current value
@@ -44,22 +43,6 @@ export const CustomDatePicker: React.FC<CustomDatePickerProps> = ({
     setViewYear(d.getFullYear());
     setViewMonth(d.getMonth());
   }, [value]);
-
-  // Determine whether to open upward or downward based on viewport space
-  useEffect(() => {
-    if (isOpen && containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      const spaceAbove = rect.top;
-
-      // If space below is tighter than 340px and there is plenty of room above, open upward
-      if (spaceBelow < 340 && spaceAbove > 320) {
-        setOpenUpward(true);
-      } else {
-        setOpenUpward(false);
-      }
-    }
-  }, [isOpen]);
 
   // Close on outside click or escape
   useEffect(() => {
@@ -219,9 +202,7 @@ export const CustomDatePicker: React.FC<CustomDatePickerProps> = ({
       {/* Popover Calendar Dropdown with Guaranteed High Stacking (z-[9999]) */}
       {isOpen && (
         <div
-          className={`absolute ${
-            openUpward ? 'bottom-full mb-2' : 'top-full mt-2'
-          } left-0 z-[9999] w-72 sm:w-80 max-w-[calc(100vw-2rem)] bg-white border border-slate-200 rounded-2xl shadow-2xl shadow-slate-900/30 p-3.5 animate-in fade-in zoom-in-95 duration-150`}
+          className="absolute top-full mt-2 left-0 z-[9999] w-72 sm:w-80 max-w-[calc(100vw-2rem)] bg-white border border-slate-200 rounded-2xl shadow-2xl shadow-slate-900/30 p-3.5 animate-in fade-in zoom-in-95 duration-150"
         >
           {/* Calendar Header with Month/Year Navigation */}
           <div className="flex items-center justify-between pb-2.5 mb-2 border-b border-slate-100">

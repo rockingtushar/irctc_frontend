@@ -1,35 +1,33 @@
 import { Train } from '../types/station';
 import { RunningStatusData } from '../types/runningStatus';
-import { fetchRunningStatus } from '../api/runningStatus';
-import { normalizeJourneyDateForRoute } from '../utils/routeUtils';
+import { fetchTrainRoute } from '../api/runningStatus';
 
 /**
  * Route Cache & Preloading Service
  * 
  * Manages in-memory caching and background preloading of train routes with:
+ * - Train-number based cache identity (date-independent route cache)
  * - Deduplication of concurrent requests (shared Promise)
  * - Controlled concurrency (4-6 parallel workers)
  * - Session-based cancellation of outdated background preloads on new searches
  * - Non-poisoning error handling (failed attempts can be retried on click)
  */
 
-// In-memory cache for loaded routes keyed by: `${trainNumber}_${apiDate}`
+// In-memory cache for loaded routes keyed by: `${trainNumber}`
 const routeCache = new Map<string, RunningStatusData>();
 
-// In-flight route fetch Promises keyed by: `${trainNumber}_${apiDate}`
+// In-flight route fetch Promises keyed by: `${trainNumber}`
 const inFlightRouteRequests = new Map<string, Promise<RunningStatusData>>();
 
 // Session ID for the active preloading batch to safely cancel stale searches
 let currentPreloadSessionId = 0;
 
 /**
- * Generates a unique, timezone-safe cache key for a train and journey date
- * e.g. "12559_25-Sep-2026"
+ * Generates a unique cache key for a train route based purely on train number
+ * e.g. "12559"
  */
-export function getRouteCacheKey(trainNumber: string, rawJourneyDate?: string): string {
-  const cleanTrainNo = (trainNumber || '').trim();
-  const { apiDate } = normalizeJourneyDateForRoute(rawJourneyDate);
-  return `${cleanTrainNo}_${apiDate}`;
+export function getRouteCacheKey(trainNumber: string, _rawJourneyDate?: string): string {
+  return (trainNumber || '').trim();
 }
 
 /**
@@ -61,6 +59,7 @@ export function getInFlightRoutePromise(
 
 /**
  * Fetches the train route with automatic caching and deduplication.
+ * - Calls GET /api/trains/route/{trainNumber} (NO journey_date parameter).
  * - If already cached: resolves immediately from cache.
  * - If already in-flight: reuses the existing in-flight Promise (no duplicate request).
  * - If neither: starts a new network call, caches on success, and clears from in-flight on finish.
@@ -71,7 +70,6 @@ export async function fetchRouteWithCache(
 ): Promise<RunningStatusData> {
   const key = getRouteCacheKey(trainNumber, rawJourneyDate);
   const cleanTrainNo = (trainNumber || '').trim();
-  const { apiDate } = normalizeJourneyDateForRoute(rawJourneyDate);
 
   // 1. Instant cache hit
   const cached = routeCache.get(key);
@@ -88,10 +86,8 @@ export async function fetchRouteWithCache(
   // 3. Initiate request and register Promise in the in-flight map
   const requestPromise = (async () => {
     try {
-      const data = await fetchRunningStatus({
-        train_no: cleanTrainNo,
-        journey_date: apiDate,
-      });
+      // Calls GET /api/trains/route/{cleanTrainNo} without date
+      const data = await fetchTrainRoute(cleanTrainNo);
 
       // Cache the result upon successful fetch
       routeCache.set(key, data);
@@ -154,10 +150,8 @@ export function preloadRoutesForTrains(
       const trainToFetch = queue[queueIndex++];
       if (!trainToFetch) continue;
 
-      const targetDate = journeyDate || trainToFetch.journeyDate;
-
       try {
-        await fetchRouteWithCache(trainToFetch.trainNumber, targetDate);
+        await fetchRouteWithCache(trainToFetch.trainNumber);
       } catch (err) {
         // Background preloading failures are non-fatal.
         // We log softly and allow manual retry on click without poisoning cache.

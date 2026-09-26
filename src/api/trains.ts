@@ -303,7 +303,7 @@ export async function searchTrains(payload: TrainSearchRequestBody): Promise<Tra
     const errMessage = lastError.message || 'Failed to fetch';
     if (errMessage.includes('Failed to fetch') || errMessage.includes('NetworkError')) {
       throw new TrainApiError(
-        `Backend server dropped the connection (Failed to fetch). Make sure your FastAPI backend is running and tunnel/port is reachable.`,
+        `Backend server is waking up or dropped connection (Failed to fetch). Please tap Search again.`,
         0
       );
     }

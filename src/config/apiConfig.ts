@@ -9,6 +9,7 @@
  */
 
 export const DEFAULT_BACKEND_URL = 'https://irctc-backend-1-ge8x.onrender.com';
+export const RAILWAY_NTES_CLOUD_RUN_URL = 'https://railway-ntes-402829987485.asia-south1.run.app';
 export const API_URL_STORAGE_KEY = 'rail_api_base_url';
 
 /**
@@ -92,7 +93,22 @@ export function getCandidateApiUrls(endpointPath: string): string[] {
     }
   }
 
-  // 4. Default Render URL
+  // 4. Dedicated Railway NTES Cloud Run service (only for route & running status queries)
+  const isNtesEndpoint =
+    cleanPath.startsWith('/train/') ||
+    cleanPath.startsWith('/trains/') ||
+    cleanPath.startsWith('/api/trains/running-status') ||
+    cleanPath.startsWith('/api/trains/route') ||
+    cleanPath.startsWith('/test/');
+
+  if (isNtesEndpoint && RAILWAY_NTES_CLOUD_RUN_URL) {
+    const ntesUrl = `${RAILWAY_NTES_CLOUD_RUN_URL}${cleanPath}`;
+    if (!candidates.includes(ntesUrl)) {
+      candidates.push(ntesUrl);
+    }
+  }
+
+  // 5. Default Render URL
   if (DEFAULT_BACKEND_URL) {
     const defaultUrl = `${DEFAULT_BACKEND_URL}${cleanPath}`;
     if (!candidates.includes(defaultUrl)) {

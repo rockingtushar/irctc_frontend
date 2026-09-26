@@ -82,8 +82,9 @@ export const TrainRouteModal: React.FC<TrainRouteModalProps> = ({
   }, [open, train?.trainNumber]);
 
   const dateInfo = useMemo(() => {
-    return normalizeJourneyDateForRoute(journeyDate || train?.journeyDate);
-  }, [journeyDate, train?.journeyDate]);
+    const rawDate = routeData?.journey_date || journeyDate || train?.journeyDate;
+    return normalizeJourneyDateForRoute(rawDate);
+  }, [routeData?.journey_date, journeyDate, train?.journeyDate]);
 
   const runningDays = useMemo(() => {
     if (!train) return [];

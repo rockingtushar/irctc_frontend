@@ -221,6 +221,106 @@ function normalizeRunningStatusData(raw: RunningStatusData): RunningStatusData {
 }
 
 /**
+ * Calls GET /api/trains/route/{trainNumber} to retrieve official train schedule and station timetable
+ */
+export async function fetchTrainRoute(trainNumber: string): Promise<RunningStatusData> {
+  const cleanTrainNo = (trainNumber || '').trim();
+
+  if (!/^\d{5}$/.test(cleanTrainNo)) {
+    throw new RunningStatusApiError('Please enter a valid 5-digit train number (e.g. 15132 or 12555).', 400);
+  }
+
+  const candidateEndpoints = [
+    `/api/trains/route/${cleanTrainNo}`,
+    `/train/route/${cleanTrainNo}`,
+    `/train/schedule/${cleanTrainNo}`,
+    ...getCandidateApiUrls(`/api/trains/route/${cleanTrainNo}`),
+    ...getCandidateApiUrls(`/train/route/${cleanTrainNo}`),
+    ...getCandidateApiUrls(`/train/schedule/${cleanTrainNo}`),
+  ];
+
+  const uniqueEndpoints = Array.from(new Set(candidateEndpoints));
+  let lastError: Error | null = null;
+
+  for (const url of uniqueEndpoints) {
+    const controller = new AbortController();
+    // Allow up to 28 seconds for the railway scraper/backend to retrieve all station records
+    const timeoutId = setTimeout(() => controller.abort(), 28000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'X-Tunnel-Skip-Anti-Abuse-Page': 'true',
+        },
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (response.status === 404) {
+        lastError = new RunningStatusApiError(
+          `Route schedule for Train ${cleanTrainNo} was not found on railway servers.`,
+          404
+        );
+        continue;
+      }
+
+      if (response.status === 502) {
+        const errBody = await response.json().catch(() => null);
+        const detail = typeof errBody?.detail === 'string' ? errBody.detail : '';
+        lastError = new RunningStatusApiError(
+          detail || `Route record was not found for Train ${cleanTrainNo}.`,
+          502
+        );
+        continue;
+      }
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => null);
+        const msg = errBody?.detail || errBody?.message || `Railway server returned HTTP ${response.status}`;
+        lastError = new RunningStatusApiError(String(msg), response.status);
+        continue;
+      }
+
+      const jsonResult = (await response.json()) as RunningStatusResponse;
+      if (jsonResult && jsonResult.success !== false && jsonResult.data) {
+        return normalizeRunningStatusData(jsonResult.data);
+      }
+    } catch (err: unknown) {
+      clearTimeout(timeoutId);
+      const isAbort =
+        err instanceof Error &&
+        (err.name === 'AbortError' || err.message.includes('aborted'));
+      if (isAbort) {
+        lastError = new RunningStatusApiError(
+          'Railway route request timed out after 28 seconds. Please check your connection or tap Retry.',
+          408
+        );
+      } else {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        lastError = new RunningStatusApiError(
+          errMsg.includes('Failed to fetch')
+            ? 'Unable to connect to railway route service. Please check your connection or tap Retry.'
+            : errMsg,
+          500
+        );
+      }
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+
+  throw new RunningStatusApiError(
+    `Unable to retrieve route for train ${cleanTrainNo}. Please verify the train number.`,
+    500
+  );
+}
+
+/**
  * Calls POST /api/trains/running-status to retrieve real-time train running status
  */
 export async function fetchRunningStatus(
