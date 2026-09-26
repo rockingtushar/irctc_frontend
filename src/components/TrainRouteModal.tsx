@@ -82,8 +82,11 @@ export const TrainRouteModal: React.FC<TrainRouteModalProps> = ({
   }, [open, train?.trainNumber]);
 
   const dateInfo = useMemo(() => {
-    return normalizeJourneyDateForRoute(journeyDate || train?.journeyDate);
-  }, [journeyDate, train?.journeyDate]);
+    // When displaying the actual route date, use the date returned by the backend (routeData.journey_date).
+    // Do not assume that the selected booking date is the actual route date.
+    const actualRouteDate = routeData?.journey_date || journeyDate || train?.journeyDate;
+    return normalizeJourneyDateForRoute(actualRouteDate);
+  }, [routeData?.journey_date, journeyDate, train?.journeyDate]);
 
   const runningDays = useMemo(() => {
     if (!train) return [];
