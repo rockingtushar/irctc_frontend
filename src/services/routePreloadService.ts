@@ -107,9 +107,9 @@ export async function fetchRouteWithCache(
   // 3. Initiate request and register Promise in the in-flight map
   const requestPromise = (async () => {
     try {
+      // Route request does not send journey_date; backend route.py automatically resolves it
       const data = await fetchRunningStatus({
         train_no: cleanTrainNo,
-        journey_date: apiDate || undefined,
       });
 
       // Cache the result under specific key and generic train key

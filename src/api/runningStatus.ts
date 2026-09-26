@@ -237,11 +237,13 @@ export async function fetchRunningStatus(
 
   const candidateEndpoints = getCandidateApiUrls('/api/trains/running-status');
   const uniqueEndpoints = Array.from(new Set(candidateEndpoints));
-  // If journey_date is supplied, use it; otherwise fallback to today's date so backend Python scraper succeeds without 422 error
+  // If journey_date is supplied, include it; otherwise omit it (journey_date is optional in route.py backend)
   const requestBody: Record<string, string> = {
     train_no: cleanTrainNo,
-    journey_date: cleanJourneyDate || formatDateToDDMMMYYYY(new Date()),
   };
+  if (cleanJourneyDate) {
+    requestBody.journey_date = cleanJourneyDate;
+  }
 
   let lastError: Error | null = null;
 
@@ -251,7 +253,7 @@ export async function fetchRunningStatus(
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     try {
-      const response = await fetch(url, {
+      let response = await fetch(url, {
         method: 'POST',
         headers: {
           'Accept': 'application/json',
@@ -261,6 +263,34 @@ export async function fetchRunningStatus(
         body: JSON.stringify(requestBody),
         signal: controller.signal,
       });
+
+      // Seamless compatibility: if the currently active backend container still has required journey_date (422)
+      if (response.status === 422 && !requestBody.journey_date) {
+        const errJson = await response.clone().json().catch(() => null);
+        const isDateRequired = errJson?.detail?.some(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (d: any) => d?.loc?.includes('journey_date') && d?.type === 'missing'
+        );
+        if (isDateRequired) {
+          const fallbackBody = {
+            train_no: cleanTrainNo,
+            journey_date: formatDateToDDMMMYYYY(new Date()),
+          };
+          const fallbackResp = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'X-Tunnel-Skip-Anti-Abuse-Page': 'true',
+            },
+            body: JSON.stringify(fallbackBody),
+            signal: controller.signal,
+          });
+          if (fallbackResp.ok) {
+            response = fallbackResp;
+          }
+        }
+      }
 
       clearTimeout(timeoutId);
 
