@@ -62,5 +62,5 @@ export interface RunningStatusResponse {
 
 export interface RunningStatusRequestBody {
   train_no: string;
-  journey_date?: string; // Optional: "DD-MMM-YYYY", e.g. "14-Sep-2026"
+  journey_date: string; // "DD-MMM-YYYY", e.g. "14-Sep-2026"
 }

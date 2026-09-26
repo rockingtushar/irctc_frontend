@@ -227,33 +227,32 @@ export async function fetchRunningStatus(
   payload: RunningStatusRequestBody
 ): Promise<RunningStatusData> {
   const cleanTrainNo = payload.train_no.trim();
-  const cleanJourneyDate = payload.journey_date && payload.journey_date.trim()
-    ? formatDateToDDMMMYYYY(payload.journey_date)
-    : '';
+  const cleanJourneyDate = formatDateToDDMMMYYYY(payload.journey_date);
 
   if (!/^\d{5}$/.test(cleanTrainNo)) {
     throw new RunningStatusApiError('Please enter a valid 5-digit train number (e.g. 15132 or 12555).', 400);
   }
 
-  const candidateEndpoints = getCandidateApiUrls('/api/trains/running-status');
+  const candidateEndpoints = [
+    ...getCandidateApiUrls('/api/trains/running-status'),
+    ...getCandidateApiUrls('/trains/running-status'),
+  ];
+
   const uniqueEndpoints = Array.from(new Set(candidateEndpoints));
-  // If journey_date is supplied, include it; otherwise omit it (journey_date is optional in route.py backend)
-  const requestBody: Record<string, string> = {
+  const requestBody = {
     train_no: cleanTrainNo,
+    journey_date: cleanJourneyDate,
   };
-  if (cleanJourneyDate) {
-    requestBody.journey_date = cleanJourneyDate;
-  }
 
   let lastError: Error | null = null;
 
   for (const url of uniqueEndpoints) {
     const controller = new AbortController();
-    // Allow up to 30 seconds for the live NTES railway scraper to retrieve all station records
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    // Allow up to 28 seconds for the live NTES railway scraper to retrieve all station records
+    const timeoutId = setTimeout(() => controller.abort(), 28000);
 
     try {
-      let response = await fetch(url, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Accept': 'application/json',
@@ -264,39 +263,11 @@ export async function fetchRunningStatus(
         signal: controller.signal,
       });
 
-      // Seamless compatibility: if the currently active backend container still has required journey_date (422)
-      if (response.status === 422 && !requestBody.journey_date) {
-        const errJson = await response.clone().json().catch(() => null);
-        const isDateRequired = errJson?.detail?.some(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          (d: any) => d?.loc?.includes('journey_date') && d?.type === 'missing'
-        );
-        if (isDateRequired) {
-          const fallbackBody = {
-            train_no: cleanTrainNo,
-            journey_date: formatDateToDDMMMYYYY(new Date()),
-          };
-          const fallbackResp = await fetch(url, {
-            method: 'POST',
-            headers: {
-              'Accept': 'application/json',
-              'Content-Type': 'application/json',
-              'X-Tunnel-Skip-Anti-Abuse-Page': 'true',
-            },
-            body: JSON.stringify(fallbackBody),
-            signal: controller.signal,
-          });
-          if (fallbackResp.ok) {
-            response = fallbackResp;
-          }
-        }
-      }
-
       clearTimeout(timeoutId);
 
       if (response.status === 404) {
         lastError = new RunningStatusApiError(
-          `Train ${cleanTrainNo} was not found on live railway servers for ${cleanJourneyDate || 'today'}.`,
+          `Train ${cleanTrainNo} was not found on live railway servers for ${cleanJourneyDate}.`,
           404
         );
         continue;
@@ -306,7 +277,7 @@ export async function fetchRunningStatus(
         const errBody = await response.json().catch(() => null);
         const detail = typeof errBody?.detail === 'string' ? errBody.detail : '';
         lastError = new RunningStatusApiError(
-          detail || `Live NTES tracking record was not found for Train ${cleanTrainNo}.`,
+          detail || `Live NTES tracking record was not found for Train ${cleanTrainNo} on ${cleanJourneyDate}.`,
           502
         );
         continue;
@@ -330,7 +301,7 @@ export async function fetchRunningStatus(
         (err.name === 'AbortError' || err.message.includes('aborted'));
       if (isAbort) {
         lastError = new RunningStatusApiError(
-          'Live railway server request timed out after 30 seconds. Please check your connection or tap Retry.',
+          'Live railway server request timed out after 28 seconds. Please check your connection or tap Refresh.',
           408
         );
       } else {
@@ -339,15 +310,8 @@ export async function fetchRunningStatus(
     }
   }
 
-  // Throw authentic error from backend or friendly network message
+  // Throw authentic error from backend instead of hiding with fake mock data
   if (lastError) {
-    const rawMsg = lastError.message || '';
-    if (rawMsg.includes('Failed to fetch') || rawMsg.includes('NetworkError') || rawMsg.includes('Load failed')) {
-      throw new RunningStatusApiError(
-        'Unable to reach live railway servers. Please verify your connection or tap Retry.',
-        0
-      );
-    }
     throw lastError;
   }
 
@@ -355,102 +319,5 @@ export async function fetchRunningStatus(
     `Unable to retrieve live running status for train ${cleanTrainNo}. Please verify the train number and date.`,
     500
   );
-}
-
-/**
- * Calls GET /train/route/{train_number} to retrieve train route and station timetable
- */
-export async function fetchTrainRoute(trainNumber: string): Promise<RunningStatusData> {
-  const cleanTrainNo = (trainNumber || '').trim();
-  if (!/^\d{5}$/.test(cleanTrainNo)) {
-    throw new RunningStatusApiError('Please enter a valid 5-digit train number (e.g. 15132 or 12555).', 400);
-  }
-
-  const candidateEndpoints = getCandidateApiUrls(`/train/route/${cleanTrainNo}`);
-  const uniqueEndpoints = Array.from(new Set(candidateEndpoints));
-  let lastError: Error | null = null;
-
-  for (const url of uniqueEndpoints) {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-          'X-Tunnel-Skip-Anti-Abuse-Page': 'true',
-        },
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const jsonResult = await response.json();
-        // If wrapped in success / data:
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const payload: any = jsonResult?.data || jsonResult?.route_data || jsonResult;
-        if (payload && (Array.isArray(payload.stations) || Array.isArray(payload.route) || Array.isArray(payload))) {
-          const rawStations = Array.isArray(payload) ? payload : (payload.stations || payload.route || []);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const stations: RunningStatusStation[] = rawStations.map((s: any, idx: number) => ({
-            sequence: s.sequence ?? s.stn_serial_number ?? s.sn ?? idx + 1,
-            station_name: s.station_name || s.stn_name || s.name || `Station ${idx + 1}`,
-            station_code: s.station_code || s.stn_code || s.code || `STN${idx + 1}`,
-            arrival_time: s.arrival_time || s.arr_time || s.sch_arrival || null,
-            departure_time: s.departure_time || s.dep_time || s.sch_departure || null,
-            halt_minutes: typeof s.halt_minutes === 'number' ? s.halt_minutes : null,
-            distance_km: typeof s.distance_km === 'number' ? s.distance_km : null,
-            day: typeof s.day === 'number' ? s.day : 1,
-            platform: s.platform || null,
-            is_stopping: s.is_stopping !== false,
-            status: s.status || null,
-          }));
-
-          const normalizedData: RunningStatusData = {
-            train_number: payload.train_number || payload.train_no || cleanTrainNo,
-            train_name: payload.train_name || payload.name || `Train ${cleanTrainNo}`,
-            journey_date: payload.journey_date || formatDateToDDMMMYYYY(new Date()),
-            source: payload.source || (stations[0] ? { station_name: stations[0].station_name, station_code: stations[0].station_code } : null),
-            destination: payload.destination || (stations.length > 0 ? { station_name: stations[stations.length - 1].station_name, station_code: stations[stations.length - 1].station_code } : null),
-            current_station: payload.current_station || null,
-            stations,
-            station_count: payload.station_count || stations.length,
-            status: payload.status || 'Timetable Route',
-            fetched_at: Date.now(),
-          };
-          return normalizeRunningStatusData(normalizedData);
-        }
-      } else {
-        const errBody = await response.json().catch(() => null);
-        const msg = errBody?.detail || errBody?.message || `Railway server returned HTTP ${response.status}`;
-        lastError = new RunningStatusApiError(String(msg), response.status);
-      }
-    } catch (err: unknown) {
-      clearTimeout(timeoutId);
-      const isAbort =
-        err instanceof Error &&
-        (err.name === 'AbortError' || err.message.includes('aborted'));
-      if (isAbort) {
-        lastError = new RunningStatusApiError(
-          'NTES route request timed out after 30 seconds.',
-          408
-        );
-      } else {
-        lastError = err instanceof Error ? err : new Error(String(err));
-      }
-    }
-  }
-
-  // Graceful fallback to running-status endpoint if /train/route direct scraper timed out
-  try {
-    return await fetchRunningStatus({ train_no: cleanTrainNo });
-  } catch {
-    throw (
-      lastError ||
-      new RunningStatusApiError(`Unable to retrieve route for train ${cleanTrainNo}.`, 502)
-    );
-  }
 }
 

@@ -82,11 +82,8 @@ export const TrainRouteModal: React.FC<TrainRouteModalProps> = ({
   }, [open, train?.trainNumber]);
 
   const dateInfo = useMemo(() => {
-    // When displaying the actual route date, use the date returned by the backend (routeData.journey_date).
-    // Do not assume that the selected booking date is the actual route date.
-    const actualRouteDate = routeData?.journey_date || journeyDate || train?.journeyDate;
-    return normalizeJourneyDateForRoute(actualRouteDate);
-  }, [routeData?.journey_date, journeyDate, train?.journeyDate]);
+    return normalizeJourneyDateForRoute(journeyDate || train?.journeyDate);
+  }, [journeyDate, train?.journeyDate]);
 
   const runningDays = useMemo(() => {
     if (!train) return [];
@@ -342,17 +339,10 @@ export const TrainRouteModal: React.FC<TrainRouteModalProps> = ({
 
               {/* Quick Meta Stats: Date, Distance, Duration, Total Stations */}
               <div className="flex items-center gap-2 sm:gap-3 text-[11px] sm:text-xs text-slate-300 flex-wrap pt-1">
-                {dateInfo.hasExplicitDate ? (
-                  <span className="inline-flex items-center gap-1 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700 text-slate-200">
-                    <Calendar className="w-3 h-3 text-orange-400" />
-                    <span>{dateInfo.displayDate}</span>
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700 text-slate-200">
-                    <Clock className="w-3 h-3 text-amber-400" />
-                    <span>Regular Timetable</span>
-                  </span>
-                )}
+                <span className="inline-flex items-center gap-1 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700 text-slate-200">
+                  <Calendar className="w-3 h-3 text-orange-400" />
+                  <span>{dateInfo.displayDate}</span>
+                </span>
 
                 {train.distance ? (
                   <span className="inline-flex items-center gap-1 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700 text-slate-200">
@@ -527,7 +517,9 @@ export const TrainRouteModal: React.FC<TrainRouteModalProps> = ({
                   Unable to load train route.
                 </h4>
                 <p className="text-xs text-slate-600">
-                  {error || 'Live railway server did not return the route. Please tap Retry.'}
+                  {error.includes('Please try again')
+                    ? error
+                    : 'Please try again.'}
                 </p>
               </div>
               <button

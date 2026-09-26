@@ -21,23 +21,24 @@ const MONTH_MAP: Record<string, string> = {
 };
 
 export interface NormalizedRouteDate {
-  apiDate: string;      // "25-Sep-2026" (or "" when date is not specified)
-  displayDate: string;  // "25 Sep 2026" or "Regular Timetable"
-  hasExplicitDate: boolean;
+  apiDate: string;      // "25-Sep-2026" (expected by POST /api/trains/running-status)
+  displayDate: string;  // "25 Sep 2026"
 }
 
 /**
  * Normalizes any train journeyDate string (e.g. "Sep 25, 2026 12:00:00 AM",
  * "2026-09-25", or "25-Sep-2026") into the exact API date format ("DD-MMM-YYYY")
  * and an identical, user-facing display string without timezone drift.
- * If date is omitted or empty, hasExplicitDate is false.
  */
 export function normalizeJourneyDateForRoute(rawDate?: string): NormalizedRouteDate {
   if (!rawDate || !rawDate.trim()) {
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const mon = SHORT_MONTHS[now.getMonth()];
+    const year = String(now.getFullYear());
     return {
-      apiDate: '',
-      displayDate: 'Regular Timetable',
-      hasExplicitDate: false,
+      apiDate: `${day}-${mon}-${year}`,
+      displayDate: `${day} ${mon} ${year}`,
     };
   }
 
@@ -54,7 +55,6 @@ export function normalizeJourneyDateForRoute(rawDate?: string): NormalizedRouteD
     return {
       apiDate: `${day}-${capitalizedMon}-${year}`,
       displayDate: `${day} ${capitalizedMon} ${year}`,
-      hasExplicitDate: true,
     };
   }
 
@@ -68,7 +68,6 @@ export function normalizeJourneyDateForRoute(rawDate?: string): NormalizedRouteD
     return {
       apiDate: `${day}-${mon}-${year}`,
       displayDate: `${day} ${mon} ${year}`,
-      hasExplicitDate: true,
     };
   }
 
@@ -82,7 +81,6 @@ export function normalizeJourneyDateForRoute(rawDate?: string): NormalizedRouteD
     return {
       apiDate: `${day}-${mon}-${year}`,
       displayDate: `${day} ${mon} ${year}`,
-      hasExplicitDate: true,
     };
   }
 
@@ -96,7 +94,6 @@ export function normalizeJourneyDateForRoute(rawDate?: string): NormalizedRouteD
       return {
         apiDate: `${day}-${mon}-${year}`,
         displayDate: `${day} ${mon} ${year}`,
-        hasExplicitDate: true,
       };
     }
   } catch {
@@ -106,7 +103,6 @@ export function normalizeJourneyDateForRoute(rawDate?: string): NormalizedRouteD
   return {
     apiDate: trimmed,
     displayDate: trimmed,
-    hasExplicitDate: true,
   };
 }
 
