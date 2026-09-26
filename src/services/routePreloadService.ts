@@ -1,6 +1,6 @@
 import { Train } from '../types/station';
 import { RunningStatusData } from '../types/runningStatus';
-import { fetchRunningStatus } from '../api/runningStatus';
+import { fetchTrainRoute } from '../api/runningStatus';
 import { normalizeJourneyDateForRoute } from '../utils/routeUtils';
 
 /**
@@ -107,10 +107,8 @@ export async function fetchRouteWithCache(
   // 3. Initiate request and register Promise in the in-flight map
   const requestPromise = (async () => {
     try {
-      // Route request does not send journey_date; backend route.py automatically resolves it
-      const data = await fetchRunningStatus({
-        train_no: cleanTrainNo,
-      });
+      // Calls GET /train/route/{train_number} for train route & schedule
+      const data = await fetchTrainRoute(cleanTrainNo);
 
       // Cache the result under specific key and generic train key
       routeCache.set(key, data);
