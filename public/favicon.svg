@@ -1,0 +1,69 @@
+<svg viewBox="0 0 42 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Saffron Gradient for Vande Bharat Body -->
+    <linearGradient id="favSaffron2W" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fb923c" />
+      <stop offset="35%" stop-color="#f97316" />
+      <stop offset="85%" stop-color="#ea580c" />
+      <stop offset="100%" stop-color="#c2410c" />
+    </linearGradient>
+
+    <!-- Tinted Glass Gradient -->
+    <linearGradient id="favGlass2W" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+
+    <!-- Headlight Glow -->
+    <radialGradient id="favGlow2W" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="50%" stop-color="#fef08a" />
+      <stop offset="100%" stop-color="#f97316" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <!-- Left-Facing Orange Vande Bharat Engine (Front 2 Wheels) -->
+  <g transform="translate(1, 1)">
+    <!-- Headlight beam pointing left -->
+    <polygon points="3,25 -8,19 -8,31 3,27" fill="#fef08a" opacity="0.35" />
+
+    <!-- Ground shadow under 2 wheels -->
+    <ellipse cx="22" cy="33" rx="16" ry="1.8" fill="#000000" opacity="0.3" />
+
+    <!-- Bogie frame bar -->
+    <rect x="14" y="28" width="18" height="2" rx="0.5" fill="#334155" />
+
+    <!-- Front 2 Wheels Only -->
+    <circle cx="17" cy="30" r="3.5" fill="#0f172a" stroke="#475569" stroke-width="1" />
+    <circle cx="17" cy="30" r="1.5" fill="#cbd5e1" />
+    <circle cx="28" cy="30" r="3.5" fill="#0f172a" stroke="#475569" stroke-width="1" />
+    <circle cx="28" cy="30" r="1.5" fill="#cbd5e1" />
+
+    <!-- Charcoal Lower Skirt & Cowcatcher -->
+    <path d="M4 28 C2 28 3 30 5 31 L38 31 L38 27 L13 27 C9 27 6 27.5 4 28 Z" fill="#1e293b" />
+
+    <!-- Main Orange Vande Bharat Body (Nose Facing Left, Ending after 2 wheels) -->
+    <path d="M19 8 C13 8 6 13 2 22 C1 24 2 27 5 28 L38 28 L38 8 L19 8 Z" fill="url(#favSaffron2W)" />
+
+    <!-- Roof White/Silver Contour -->
+    <path d="M21 8 C15 8 10 10 7 13 L38 13 L38 8 Z" fill="#ffffff" opacity="0.9" />
+
+    <!-- White Aerodynamic Speed Stripe on Nose -->
+    <path d="M17 16 C11 17 6 21 3 25 L38 25 L38 23.5 L16 23.5 C12 23.5 8 21 5 17.5 Z" fill="#ffffff" />
+
+    <!-- Curved Cockpit Windshield (Tinted Black, Facing Left) -->
+    <path d="M15 10 C10 11 6.5 15 4 20 L21 20 L21 10 Z" fill="url(#favGlass2W)" stroke="#090d16" stroke-width="0.8" />
+    <!-- Windshield Reflection -->
+    <path d="M13 12 C9.5 13 7 16 5.5 19 L9.5 19 L16 12 Z" fill="#93c5fd" opacity="0.6" />
+
+    <!-- Driver Cab Window -->
+    <rect x="24" y="12" width="8.5" height="6.5" rx="1.5" fill="url(#favGlass2W)" />
+    <!-- Window Glare -->
+    <line x1="26" y1="13" x2="28" y2="17.5" stroke="#ffffff" stroke-width="0.8" opacity="0.4" />
+
+    <!-- Front Blazing LED Headlight (At Nose Tip) -->
+    <circle cx="2.5" cy="24.5" r="2.2" fill="#ffffff" />
+    <circle cx="2.5" cy="24.5" r="4.5" fill="url(#favGlow2W)" />
+    <circle cx="4.5" cy="26" r="0.9" fill="#ef4444" />
+  </g>
+</svg>

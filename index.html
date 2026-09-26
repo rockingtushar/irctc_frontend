@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=vb-transparent-org" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Indian Railways - Train Search, Live Running Status & PNR</title>
+    <meta name="description" content="High-performance IRCTC-style train search, real-time running status, and PNR status tracking." />
+    <meta property="og:title" content="Indian Railways - Train Search, Live Running Status & PNR" />
+    <meta property="og:description" content="High-performance IRCTC-style train search, real-time running status, and PNR status tracking." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://irctc-backend-1-ge8x.onrender.com" crossorigin>
+    <link rel="dns-prefetch" href="https://irctc-backend-1-ge8x.onrender.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>
+      // Instantly dispatch non-blocking background wake-up pings as soon as HTML starts parsing
+      (function() {
+        var endpoints = [
+          '/api/health',
+          '/health',
+          '/devtunnel-proxy/health',
+          'https://irctc-backend-1-ge8x.onrender.com/health',
+          'https://irctc-backend-1-ge8x.onrender.com/'
+        ];
+        endpoints.forEach(function(url) {
+          try {
+            fetch(url, {
+              method: 'GET',
+              mode: url.indexOf('http') === 0 ? 'no-cors' : 'cors',
+              cache: 'no-cache',
+              headers: { 'X-Warmup-Ping': 'immediate' }
+            }).catch(function() {});
+          } catch(e) {}
+        });
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

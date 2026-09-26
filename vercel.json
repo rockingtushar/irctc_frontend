@@ -1,0 +1,24 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/:match*",
+      "destination": "https://irctc-backend-1-ge8x.onrender.com/api/:match*"
+    },
+    {
+      "source": "/chart/:match*",
+      "destination": "https://irctc-backend-1-ge8x.onrender.com/chart/:match*"
+    },
+    {
+      "source": "/train/:match*",
+      "destination": "https://irctc-backend-1-ge8x.onrender.com/train/:match*"
+    },
+    {
+      "source": "/health",
+      "destination": "https://irctc-backend-1-ge8x.onrender.com/health"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
