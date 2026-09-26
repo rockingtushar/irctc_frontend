@@ -524,9 +524,7 @@ export const TrainRouteModal: React.FC<TrainRouteModalProps> = ({
                   Unable to load train route.
                 </h4>
                 <p className="text-xs text-slate-600">
-                  {error.includes('Please try again')
-                    ? error
-                    : 'Please try again.'}
+                  {error || 'Live railway server did not return the route. Please tap Retry.'}
                 </p>
               </div>
               <button

@@ -235,11 +235,7 @@ export async function fetchRunningStatus(
     throw new RunningStatusApiError('Please enter a valid 5-digit train number (e.g. 15132 or 12555).', 400);
   }
 
-  const candidateEndpoints = [
-    ...getCandidateApiUrls('/api/trains/running-status'),
-    ...getCandidateApiUrls('/trains/running-status'),
-  ];
-
+  const candidateEndpoints = getCandidateApiUrls('/api/trains/running-status');
   const uniqueEndpoints = Array.from(new Set(candidateEndpoints));
   // If journey_date is supplied, use it; otherwise fallback to today's date so backend Python scraper succeeds without 422 error
   const requestBody: Record<string, string> = {
@@ -251,8 +247,8 @@ export async function fetchRunningStatus(
 
   for (const url of uniqueEndpoints) {
     const controller = new AbortController();
-    // Allow up to 28 seconds for the live NTES railway scraper to retrieve all station records
-    const timeoutId = setTimeout(() => controller.abort(), 28000);
+    // Allow up to 30 seconds for the live NTES railway scraper to retrieve all station records
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     try {
       const response = await fetch(url, {
@@ -270,7 +266,7 @@ export async function fetchRunningStatus(
 
       if (response.status === 404) {
         lastError = new RunningStatusApiError(
-          `Train ${cleanTrainNo} was not found on live railway servers for ${cleanJourneyDate}.`,
+          `Train ${cleanTrainNo} was not found on live railway servers for ${cleanJourneyDate || 'today'}.`,
           404
         );
         continue;
@@ -280,7 +276,7 @@ export async function fetchRunningStatus(
         const errBody = await response.json().catch(() => null);
         const detail = typeof errBody?.detail === 'string' ? errBody.detail : '';
         lastError = new RunningStatusApiError(
-          detail || `Live NTES tracking record was not found for Train ${cleanTrainNo} on ${cleanJourneyDate}.`,
+          detail || `Live NTES tracking record was not found for Train ${cleanTrainNo}.`,
           502
         );
         continue;
@@ -304,7 +300,7 @@ export async function fetchRunningStatus(
         (err.name === 'AbortError' || err.message.includes('aborted'));
       if (isAbort) {
         lastError = new RunningStatusApiError(
-          'Live railway server request timed out after 28 seconds. Please check your connection or tap Refresh.',
+          'Live railway server request timed out after 30 seconds. Please check your connection or tap Retry.',
           408
         );
       } else {
@@ -313,8 +309,15 @@ export async function fetchRunningStatus(
     }
   }
 
-  // Throw authentic error from backend instead of hiding with fake mock data
+  // Throw authentic error from backend or friendly network message
   if (lastError) {
+    const rawMsg = lastError.message || '';
+    if (rawMsg.includes('Failed to fetch') || rawMsg.includes('NetworkError') || rawMsg.includes('Load failed')) {
+      throw new RunningStatusApiError(
+        'Unable to reach live railway servers. Please verify your connection or tap Retry.',
+        0
+      );
+    }
     throw lastError;
   }
 

@@ -70,7 +70,6 @@ export function setApiBaseUrl(url: string): void {
  */
 export function getCandidateApiUrls(endpointPath: string): string[] {
   const cleanPath = endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`;
-  const base = getApiBaseUrl().replace(/\/$/, '');
   const candidates: string[] = [];
 
   // 1. Direct relative path (works with Vite dev proxy and Vercel rewrites without CORS)
@@ -84,16 +83,24 @@ export function getCandidateApiUrls(endpointPath: string): string[] {
     }
   }
 
-  // 3. Primary configured Base URL (e.g. https://irctc-backend-1-ge8x.onrender.com)
+  // 3. Configured Base URL (include if same-origin, localhost, or non-browser/SSR)
+  const base = getApiBaseUrl().replace(/\/$/, '');
   if (base) {
-    const fullUrl = `${base}${cleanPath}`;
-    if (!candidates.includes(fullUrl)) {
-      candidates.push(fullUrl);
+    const isBrowser = typeof window !== 'undefined';
+    const isLocalhost = isBrowser && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+    const isSameOrigin = isBrowser && window.location.origin === base;
+
+    // Only append direct external backend URL when safe to prevent browser 'Disallowed CORS origin'
+    if (!isBrowser || isSameOrigin || isLocalhost) {
+      const fullUrl = `${base}${cleanPath}`;
+      if (!candidates.includes(fullUrl)) {
+        candidates.push(fullUrl);
+      }
     }
   }
 
-  // 4. Default Render URL
-  if (DEFAULT_BACKEND_URL) {
+  // 4. Default Render URL (only if non-browser or matching origin)
+  if (DEFAULT_BACKEND_URL && typeof window === 'undefined') {
     const defaultUrl = `${DEFAULT_BACKEND_URL}${cleanPath}`;
     if (!candidates.includes(defaultUrl)) {
       candidates.push(defaultUrl);

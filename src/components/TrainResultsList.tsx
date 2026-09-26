@@ -523,19 +523,14 @@ export const TrainResultsList: React.FC<TrainResultsListProps> = ({
         setRouteData(data);
         setIsRouteLoading(false);
         setRouteError(null);
+        return;
       } catch (err: unknown) {
-        console.error('[TrainResultsList] In-flight route error:', err);
-        const msg =
-          err instanceof Error && err.message
-            ? err.message
-            : 'Unable to load train route. Please try again.';
-        setRouteError(msg);
-        setIsRouteLoading(false);
+        console.warn('[TrainResultsList] In-flight route preload was interrupted, attempting direct fetch:', err);
+        // Fall through to direct fetch below instead of displaying error immediately
       }
-      return;
     }
 
-    // 3. Not cached and not in-flight: initiate fetch (e.g. if background preload failed or had not started)
+    // 3. Not cached and not in-flight: initiate fetch (or fallback if in-flight was interrupted)
     setIsRouteLoading(true);
     setRouteError(null);
     setRouteData(null);
@@ -547,10 +542,10 @@ export const TrainResultsList: React.FC<TrainResultsListProps> = ({
       setRouteError(null);
     } catch (err: unknown) {
       console.error('[TrainResultsList] Route fetch error:', err);
-      const msg =
-        err instanceof Error && err.message
-          ? err.message
-          : 'Unable to load train route. Please try again.';
+      const rawMsg = err instanceof Error && err.message ? err.message : '';
+      const msg = rawMsg.includes('Failed to fetch') || rawMsg.includes('NetworkError')
+        ? 'Live train route server is taking longer than usual. Please tap Retry.'
+        : rawMsg || 'Unable to load train route. Please try again.';
       setRouteError(msg);
       setIsRouteLoading(false);
     }
@@ -568,10 +563,10 @@ export const TrainResultsList: React.FC<TrainResultsListProps> = ({
       setIsRouteLoading(false);
       setRouteError(null);
     } catch (err: unknown) {
-      const msg =
-        err instanceof Error && err.message
-          ? err.message
-          : 'Unable to load train route. Please try again.';
+      const rawMsg = err instanceof Error && err.message ? err.message : '';
+      const msg = rawMsg.includes('Failed to fetch') || rawMsg.includes('NetworkError')
+        ? 'Live train route server is taking longer than usual. Please tap Retry.'
+        : rawMsg || 'Unable to load train route. Please try again.';
       setRouteError(msg);
       setIsRouteLoading(false);
     }

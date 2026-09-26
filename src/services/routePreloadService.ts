@@ -141,7 +141,7 @@ export async function fetchRouteWithCache(
 export function preloadRoutesForTrains(
   trains: Train[],
   journeyDate?: string,
-  concurrency = 5
+  _concurrency = 1
 ): () => void {
   if (!Array.isArray(trains) || trains.length === 0) {
     return () => {};
@@ -150,8 +150,8 @@ export function preloadRoutesForTrains(
   // Increment session ID to cancel any prior active preloading queues
   const sessionId = ++currentPreloadSessionId;
 
-  // Filter trains needing preload
-  const queue: Train[] = trains.filter((t) => {
+  // Filter top 3 trains needing preload to preserve backend bandwidth
+  const queue: Train[] = trains.slice(0, 3).filter((t) => {
     if (!t || !t.trainNumber) return false;
     const key = getRouteCacheKey(t.trainNumber, journeyDate || t.journeyDate);
     return !routeCache.has(key) && !inFlightRouteRequests.has(key);
@@ -162,42 +162,38 @@ export function preloadRoutesForTrains(
   }
 
   let queueIndex = 0;
-  const poolLimit = Math.max(1, Math.min(concurrency, 6));
+  let timerId: ReturnType<typeof setTimeout> | null = null;
 
-  const runWorker = async () => {
-    while (queueIndex < queue.length) {
-      // Check if this preloading session has been superseded by a new search
-      if (sessionId !== currentPreloadSessionId) {
-        return;
-      }
+  const runNext = async () => {
+    if (sessionId !== currentPreloadSessionId || queueIndex >= queue.length) {
+      return;
+    }
 
-      const trainToFetch = queue[queueIndex++];
-      if (!trainToFetch) continue;
+    const trainToFetch = queue[queueIndex++];
+    if (!trainToFetch) return;
 
-      const targetDate = journeyDate || trainToFetch.journeyDate;
+    const targetDate = journeyDate || trainToFetch.journeyDate;
 
-      try {
-        await fetchRouteWithCache(trainToFetch.trainNumber, targetDate);
-      } catch (err) {
-        // Background preloading failures are non-fatal.
-        // We log softly and allow manual retry on click without poisoning cache.
-        console.debug(
-          `[RoutePreloadService] Background preload skipped/failed for train ${trainToFetch.trainNumber}:`,
-          err instanceof Error ? err.message : err
-        );
-      }
+    try {
+      await fetchRouteWithCache(trainToFetch.trainNumber, targetDate);
+    } catch (err) {
+      console.debug(
+        `[RoutePreloadService] Gentle preload skipped for train ${trainToFetch.trainNumber}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
+
+    if (sessionId === currentPreloadSessionId && queueIndex < queue.length) {
+      timerId = setTimeout(runNext, 2000);
     }
   };
 
-  // Launch parallel workers up to concurrency limit
-  const activeWorkers = Math.min(poolLimit, queue.length);
-  for (let i = 0; i < activeWorkers; i++) {
-    // Schedule on microtask queue so current render completes with zero delay
-    Promise.resolve().then(() => runWorker());
-  }
+  // Start initial background preload after a 1500ms delay to let initial UI render and settle
+  timerId = setTimeout(runNext, 1500);
 
   // Return cancel callback
   return () => {
+    if (timerId) clearTimeout(timerId);
     if (currentPreloadSessionId === sessionId) {
       currentPreloadSessionId++;
     }
