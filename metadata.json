@@ -1,0 +1,6 @@
+{
+  "name": "Train Search & Station Autocomplete",
+  "description": "High-performance IRCTC-style train search, real-time running status, and PNR status tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
