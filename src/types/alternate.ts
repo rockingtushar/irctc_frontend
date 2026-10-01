@@ -48,7 +48,7 @@ export interface AlternateResultItem {
   raw?: unknown;
 }
 
-export type AlternateSearchStatus = 'idle' | 'starting' | 'searching' | 'completed' | 'error';
+export type AlternateSearchStatus = 'idle' | 'starting' | 'searching' | 'completed' | 'error' | 'cancelled';
 
 export interface AlternateSearchProgress {
   checked: number;

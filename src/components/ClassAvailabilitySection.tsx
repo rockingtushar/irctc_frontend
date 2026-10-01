@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef } from 'react';
 import { Train, ClassState } from '../types/station';
 import {
   Sparkles,
@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { AlternateAvailabilityView } from './AlternateAvailabilityView';
 import { getSavedTrainSessionId } from '../api/trains';
+import { extractQuotaCode } from '../services/alternateAvailabilityService';
 
 interface ClassAvailabilitySectionProps {
   train: Train;
@@ -346,7 +347,6 @@ export const ClassAvailabilitySection: React.FC<ClassAvailabilitySectionProps> =
 }) => {
   const avlClasses = sortRailwayClasses(train.avlClasses ?? []);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-  const [isAlternateOpen, setIsAlternateOpen] = useState(false);
 
   if (avlClasses.length === 0) {
     return null;
@@ -675,7 +675,7 @@ export const ClassAvailabilitySection: React.FC<ClassAvailabilitySectionProps> =
           toCode={train.toStnCode || ''}
           journeyDate={journeyDate || train.journeyDate || ''}
           travelClass={activeClass}
-          quota={currentQuotaVal}
+          quota={extractQuotaCode(currentQuotaVal)}
           trainType={
             Array.isArray(train.trainType)
               ? train.trainType[0]
@@ -684,8 +684,6 @@ export const ClassAvailabilitySection: React.FC<ClassAvailabilitySectionProps> =
               : undefined
           }
           currentStatus={activeDays.find((d) => d.date === journeyDate)?.status || activeDays[0]?.status || null}
-          isOpen={isAlternateOpen}
-          onToggleOpen={() => setIsAlternateOpen((prev) => !prev)}
           onOpenRoute={onOpenRoute}
         />
       </div>

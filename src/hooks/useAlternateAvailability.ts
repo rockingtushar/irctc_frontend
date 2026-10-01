@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   generateAlternateSearchKey,
   getAlternateSearchState,
   subscribeToAlternateSearch,
   startAlternateAvailability,
+  stopAlternateAvailability,
   isWaitlistStatus,
 } from '../services/alternateAvailabilityService';
 import { AlternateSearchState } from '../types/alternate';
@@ -111,6 +112,10 @@ export function useAlternateAvailability({
     });
   };
 
+  const stopSearch = useCallback(() => {
+    stopAlternateAvailability(searchKey);
+  }, [searchKey]);
+
   const isWL = isWaitlistStatus(initialStatus);
 
   return {
@@ -122,7 +127,9 @@ export function useAlternateAvailability({
     progress: state.progress,
     isSearching: state.status === 'starting' || state.status === 'searching',
     isCompleted: state.status === 'completed',
+    isCancelled: state.status === 'cancelled',
     isWL,
     startSearch,
+    stopSearch,
   };
 }

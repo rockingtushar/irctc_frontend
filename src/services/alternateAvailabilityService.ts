@@ -170,6 +170,22 @@ export function isWaitlistStatus(rawStatus?: string | null): boolean {
 }
 
 /**
+ * Robustly normalizes quota string like "General (GN)" or "GN" to standard 2-letter code "GN"
+ */
+export function extractQuotaCode(quota?: string | null): string {
+  if (!quota) return 'GN';
+  const str = String(quota).trim();
+  const match = str.match(/\(([A-Z0-9]+)\)/i);
+  if (match && match[1]) return match[1].toUpperCase();
+  const upper = str.toUpperCase();
+  if (upper.startsWith('GN') || upper.includes('GENERAL')) return 'GN';
+  if (upper.startsWith('TQ') || upper.includes('TATKAL')) return 'TQ';
+  if (upper.startsWith('PT') || upper.includes('PREMIUM')) return 'PT';
+  if (upper.startsWith('LD') || upper.includes('LADIES')) return 'LD';
+  return upper.replace(/[^A-Z0-9]/g, '') || 'GN';
+}
+
+/**
  * Generates a stable unique search key for the booking context
  */
 export function generateAlternateSearchKey(params: {
@@ -185,7 +201,7 @@ export function generateAlternateSearchKey(params: {
   const from = String(params.fromCode || '').trim().toUpperCase();
   const to = String(params.toCode || '').trim().toUpperCase();
   const cls = String(params.travelClass || '').trim().toUpperCase();
-  const quota = String(params.quota || 'GN').trim().toUpperCase();
+  const quota = extractQuotaCode(params.quota);
 
   return `${tNo}|${date}|${from}|${to}|${cls}|${quota}`;
 }
@@ -266,11 +282,9 @@ export function normalizeAlternateResult(
     ''
   ).toUpperCase();
 
-  const quota = safeString(
-    raw.quota ||
-    fallbackParams?.quota,
-    'GN'
-  ).toUpperCase();
+  const quota = extractQuotaCode(
+    safeString(raw.quota || fallbackParams?.quota, 'GN')
+  );
 
   // 1. Raw status candidate
   let rawStatusStr = safeString(
@@ -326,14 +340,28 @@ export function normalizeAlternateResult(
     }
   }
 
-  // 3. If no direct numeric field, parse numbers from status string (e.g. "AVAILABLE-0021" -> 21, "AVAILABLE 5" -> 5)
+  // 3. If no direct numeric field, parse numbers from availability/status string (e.g. "AVAILABLE-0014" -> 14, "AVAILABLE 5" -> 5)
   if (parsedTicketCount === undefined) {
-    const numMatch = rawStatusStr.match(/(?:AVAILABLE|CURR_AVBL|AVBL|AVL|RAC|WL|GNWL|RLWL|PQWL)[\s\-_]*0*(\d+)/i) ||
-                     rawStatusStr.match(/0*(\d{1,4})/);
-    if (numMatch && numMatch[1]) {
-      const num = parseInt(numMatch[1], 10);
-      if (!isNaN(num)) {
-        parsedTicketCount = num;
+    const textSources = [
+      rawStatusStr,
+      safeString(raw.availability),
+      safeString(raw.availability_status),
+      safeString(raw.availablityStatus),
+      safeString(raw.current_status),
+    ];
+
+    for (const text of textSources) {
+      if (!text) continue;
+      const numMatch =
+        text.match(/(?:AVAILABLE|CURR_AVBL|AVBL|AVL|RAC|WL|GNWL|RLWL|PQWL)[\s\-_]*0*(\d+)/i) ||
+        text.match(/(?:CNF|CONFIRMED)[\s\-_]*0*(\d+)/i) ||
+        text.match(/0*(\d{1,4})/);
+      if (numMatch && numMatch[1]) {
+        const num = parseInt(numMatch[1], 10);
+        if (!isNaN(num) && num > 0) {
+          parsedTicketCount = num;
+          break;
+        }
       }
     }
   }
@@ -368,7 +396,7 @@ export function normalizeAlternateResult(
   ) {
     if (typeof parsedTicketCount === 'number') {
       status = `AVAILABLE ${parsedTicketCount}`;
-      ticketStatusLabel = `${parsedTicketCount} Tickets Available`;
+      ticketStatusLabel = `${parsedTicketCount} Seats Available`;
     } else {
       status = 'AVAILABLE';
       ticketStatusLabel = 'Confirmed Seats Available';
@@ -570,6 +598,13 @@ function updateState(
   };
 
   const partial = updater(existing);
+
+  // Late Event Protection: If search was manually cancelled, reject any updates
+  // that would revive it to searching/completed or append late results (unless starting a fresh search)
+  if (existing.status === 'cancelled' && partial.status !== 'starting') {
+    return existing;
+  }
+
   const updated: AlternateSearchState = {
     ...existing,
     ...partial,
@@ -581,6 +616,38 @@ function updateState(
   alternateSearchCache.set(searchKey, updated);
   notifySubscribers(searchKey, updated);
   return updated;
+}
+
+/**
+ * Manually stops an active alternate availability search:
+ * 1. Aborts the active SSE stream.
+ * 2. Sets status to 'cancelled'.
+ * 3. Preserves all already-found results.
+ * 4. Prevents late events from reviving or altering the state.
+ */
+export function stopAlternateAvailability(searchKey: string): void {
+  // 1. Immediately abort active SSE stream
+  const ctrl = activeStreamControllers.get(searchKey);
+  if (ctrl) {
+    try {
+      ctrl.abort();
+    } catch {
+      // ignore
+    }
+    activeStreamControllers.delete(searchKey);
+  }
+
+  // 2. Mark state as cancelled without clearing results
+  const current = getAlternateSearchState(searchKey);
+  if (current && (current.status === 'starting' || current.status === 'searching')) {
+    const updated: AlternateSearchState = {
+      ...current,
+      status: 'cancelled',
+    };
+    alternateSearchCache.set(searchKey, updated);
+    notifySubscribers(searchKey, updated);
+    console.log(`[AlternateAvailabilityService] Search manually cancelled for ${searchKey}`);
+  }
 }
 
 /**
@@ -626,6 +693,7 @@ export async function startAlternateAvailability(params: {
   }
 
   // 1. Guard against duplicate search: check in-memory cache
+  // If search was previously cancelled, allow a fresh search to start
   const existing = getAlternateSearchState(searchKey);
   if (
     existing &&
@@ -637,11 +705,12 @@ export async function startAlternateAvailability(params: {
     return existing;
   }
 
-  // 2. Initialize starting state in memory
+  // 2. Initialize starting state in memory (fresh search starts with empty results)
   const initial = updateState(searchKey, () => ({
     status: 'starting',
     error: null,
     startedAt: Date.now(),
+    results: [],
   }));
 
   // Execute background job (asynchronous & non-blocking)
@@ -675,7 +744,7 @@ async function runAlternateJobInBackground(
   const cleanToCode = String(params.toCode || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   const cleanJourneyDate = toStandardYYYYMMDD(params.journeyDate);
   const cleanClass = String(params.travelClass || '').trim().toUpperCase();
-  const cleanQuota = String(params.quota || 'GN').trim().toUpperCase();
+  const cleanQuota = extractQuotaCode(params.quota);
 
   if (!cleanFromCode || !cleanToCode) {
     const errMsg = 'Selected train source or destination station code is missing.';
@@ -701,9 +770,10 @@ async function runAlternateJobInBackground(
 
   const startEndpoints = getCandidateApiUrls('/api/trains/alternate/start');
   let jobId: string | null = null;
+  let successfulBaseUrl = '';
   let lastStartError: Error | null = null;
 
-  const tryStartJob = async (sessionIdToUse: string): Promise<string | null> => {
+  const tryStartJob = async (sessionIdToUse: string): Promise<{ jobId: string; baseUrl: string } | null> => {
     if (!sessionIdToUse) return null;
 
     const payload: AlternateAvailabilityRequest = {
@@ -738,10 +808,22 @@ async function runAlternateJobInBackground(
 
         if (res.ok) {
           const data = (await res.json()) as Record<string, unknown>;
-          if (data.job_id && typeof data.job_id === 'string') {
-            return data.job_id;
-          } else if (data.jobId && typeof data.jobId === 'string') {
-            return data.jobId;
+          const receivedJobId =
+            typeof data.job_id === 'string'
+              ? data.job_id
+              : typeof data.jobId === 'string'
+              ? data.jobId
+              : null;
+          if (receivedJobId) {
+            let matchedBase = '';
+            if (url.startsWith('http://') || url.startsWith('https://')) {
+              try {
+                matchedBase = new URL(url).origin;
+              } catch {
+                matchedBase = '';
+              }
+            }
+            return { jobId: receivedJobId, baseUrl: matchedBase };
           }
         } else {
           const errBody = await res.json().catch(() => null);
@@ -765,7 +847,11 @@ async function runAlternateJobInBackground(
   };
 
   // 1st attempt with current session
-  jobId = await tryStartJob(baseSessionId);
+  const firstAttempt = await tryStartJob(baseSessionId);
+  if (firstAttempt) {
+    jobId = firstAttempt.jobId;
+    successfulBaseUrl = firstAttempt.baseUrl;
+  }
 
   // If first attempt failed due to session expired or not found, automatically get fresh session and retry
   if (!jobId) {
@@ -774,7 +860,11 @@ async function runAlternateJobInBackground(
       const freshCaptcha = await startCaptchaSession();
       if (freshCaptcha?.session_id) {
         baseSessionId = freshCaptcha.session_id;
-        jobId = await tryStartJob(baseSessionId);
+        const retryAttempt = await tryStartJob(baseSessionId);
+        if (retryAttempt) {
+          jobId = retryAttempt.jobId;
+          successfulBaseUrl = retryAttempt.baseUrl;
+        }
       }
     } catch (sessionErr) {
       console.warn('[AlternateAvailabilityService] Failed to get fresh session for retry:', sessionErr);
@@ -820,29 +910,35 @@ async function runAlternateJobInBackground(
     jobId!,
     fallbackParams,
     sseAbortCtrl.signal,
-    () => {
-      sseAbortCtrl.abort();
-    }
+    successfulBaseUrl
   ).catch((err) => {
     console.warn('[AlternateAvailabilityService] Status polling warning:', err);
   });
 
   // Launch SSE stream reader
-  await connectToAlternateSseStream(searchKey, jobId!, fallbackParams, sseAbortCtrl);
+  await connectToAlternateSseStream(searchKey, jobId!, fallbackParams, sseAbortCtrl, successfulBaseUrl);
 }
 
 /**
  * Concurrent status poller for /api/trains/alternate/status/{job_id}
- * Ensures instantaneous completion detection even if SSE is buffered by intermediate proxies
+ * Ensures status progress detection without aborting active SSE connections.
  */
 async function pollAlternateJobStatus(
   searchKey: string,
   jobId: string,
   fallbackParams: { trainNumber: string; class: string; quota: string; journeyDate: string },
   signal: AbortSignal,
-  onStop: () => void
+  baseUrl = ''
 ): Promise<void> {
-  const statusEndpoints = getCandidateApiUrls(`/api/trains/alternate/status/${jobId}`);
+  const statusEndpoints: string[] = [];
+  if (baseUrl) {
+    statusEndpoints.push(`${baseUrl}/api/trains/alternate/status/${jobId}`);
+  }
+  for (const c of getCandidateApiUrls(`/api/trains/alternate/status/${jobId}`)) {
+    if (!statusEndpoints.includes(c)) {
+      statusEndpoints.push(c);
+    }
+  }
   const statusUrl = statusEndpoints[0];
   const maxPolls = 20; // 24 seconds max
   let pollCount = 0;
@@ -858,7 +954,7 @@ async function pollAlternateJobStatus(
     if (signal.aborted) break;
 
     const currentState = getAlternateSearchState(searchKey);
-    if (!currentState || currentState.status === 'completed' || currentState.status === 'error') {
+    if (!currentState || currentState.status === 'completed' || currentState.status === 'error' || currentState.status === 'cancelled') {
       break;
     }
 
@@ -925,10 +1021,8 @@ async function pollAlternateJobStatus(
       const statusStr = String(data.status || '').toLowerCase();
       if (statusStr === 'completed' || statusStr === 'done' || statusStr === 'finished') {
         console.log(`[AlternateAvailabilityService] Status poller detected completed in ${pollCount} polls for ${searchKey}`);
-        updateState(searchKey, () => ({
-          status: 'completed',
-        }));
-        onStop();
+        // Requirement 1: Status polling must NOT abort an active SSE connection merely because it received completed.
+        // It simply stops its own polling loop and lets the SSE stream receive its own completed event.
         break;
       }
 
@@ -937,7 +1031,6 @@ async function pollAlternateJobStatus(
           status: prev.results.length > 0 ? 'completed' : 'error',
           error: String(data.error || data.message || 'Alternate search encountered an error'),
         }));
-        onStop();
         break;
       }
     } catch {
@@ -954,9 +1047,18 @@ async function connectToAlternateSseStream(
   searchKey: string,
   jobId: string,
   fallbackParams: { trainNumber: string; class: string; quota: string; journeyDate: string },
-  abortCtrl: AbortController
+  abortCtrl: AbortController,
+  baseUrl = ''
 ): Promise<void> {
-  const streamEndpoints = getCandidateApiUrls(`/api/trains/alternate/stream/${jobId}`);
+  const streamEndpoints: string[] = [];
+  if (baseUrl) {
+    streamEndpoints.push(`${baseUrl}/api/trains/alternate/stream/${jobId}`);
+  }
+  for (const c of getCandidateApiUrls(`/api/trains/alternate/stream/${jobId}`)) {
+    if (!streamEndpoints.includes(c)) {
+      streamEndpoints.push(c);
+    }
+  }
   let connected = false;
 
   for (const streamUrl of streamEndpoints) {
@@ -1099,6 +1201,12 @@ function processSseMessage(
   seenFingerprints: Set<string>
 ): boolean {
   try {
+    // Late Event Protection: If search was manually cancelled, ignore all SSE events and stop reader
+    const currentState = getAlternateSearchState(searchKey);
+    if (currentState?.status === 'cancelled') {
+      return true; // Stop reading stream immediately
+    }
+
     let parsed: unknown = null;
     try {
       parsed = JSON.parse(dataStr);

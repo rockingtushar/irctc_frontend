@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Sparkles,
   ArrowRight,
@@ -13,6 +13,7 @@ import {
   ChevronDown,
   ChevronUp,
   Info,
+  X,
 } from 'lucide-react';
 import { useAlternateAvailability } from '../hooks/useAlternateAvailability';
 import { isWaitlistStatus } from '../services/alternateAvailabilityService';
@@ -31,8 +32,8 @@ interface AlternateAvailabilityViewProps {
   quota?: string;
   trainType?: string;
   currentStatus?: string | null;
-  isOpen: boolean;
-  onToggleOpen: () => void;
+  isOpen?: boolean;
+  onToggleOpen?: () => void;
   onOpenRoute?: (trainNumber: string, trainName?: string) => void;
 }
 
@@ -172,14 +173,25 @@ export const AlternateAvailabilityView: React.FC<AlternateAvailabilityViewProps>
   quota = 'GN',
   trainType,
   currentStatus,
-  isOpen,
+  isOpen: initialIsOpen = false,
   onToggleOpen,
   onOpenRoute,
 }) => {
   const isWL = isWaitlistStatus(currentStatus);
 
   // Hook automatically subscribes to background search and starts it automatically on WL
-  const { results, status, error, isSearching, isCompleted, progress } = useAlternateAvailability({
+  const {
+    searchKey,
+    results,
+    status,
+    error,
+    isSearching,
+    isCompleted,
+    isCancelled,
+    progress,
+    stopSearch,
+    startSearch,
+  } = useAlternateAvailability({
     trainNumber,
     fromCode,
     toCode,
@@ -190,6 +202,42 @@ export const AlternateAvailabilityView: React.FC<AlternateAvailabilityViewProps>
     initialStatus: currentStatus,
     autoStartOnWL: true,
   });
+
+  // Track panel open/close state
+  const [isOpen, setIsOpen] = useState<boolean>(initialIsOpen);
+
+  // Track auto-open so it only triggers ONCE per searchKey when the first result arrives
+  const autoOpenedForSearchRef = useRef<string | null>(null);
+  const prevSearchKeyRef = useRef<string>(searchKey);
+
+  // When searchKey changes (new train, class, date, or route), reset auto-open tracker and collapse
+  useEffect(() => {
+    if (prevSearchKeyRef.current !== searchKey) {
+      prevSearchKeyRef.current = searchKey;
+      autoOpenedForSearchRef.current = null;
+      setIsOpen(false);
+    }
+  }, [searchKey]);
+
+  // When a fresh search begins with 0 results, reset the tracker
+  useEffect(() => {
+    if (status === 'starting' && results.length === 0) {
+      autoOpenedForSearchRef.current = null;
+    }
+  }, [status, results.length]);
+
+  // Auto-open ONCE when the first result arrives (results.length transitions from 0 to >= 1)
+  useEffect(() => {
+    if (results.length > 0 && autoOpenedForSearchRef.current !== searchKey) {
+      autoOpenedForSearchRef.current = searchKey;
+      setIsOpen(true);
+    }
+  }, [results.length, searchKey]);
+
+  const handleToggleOpen = () => {
+    setIsOpen((prev) => !prev);
+    onToggleOpen?.();
+  };
 
   // Dynamic seat count state for alternate cards when not pre-populated
   const [resolvedCounts, setResolvedCounts] = useState<Record<string, number>>({});
@@ -262,9 +310,13 @@ export const AlternateAvailabilityView: React.FC<AlternateAvailabilityViewProps>
             <p className="text-[10px] text-slate-500">
               {isWL
                 ? isSearching
-                  ? 'Searching seat alternatives in background...'
+                  ? progress && progress.total > 0
+                    ? `Checking ${progress.checked}/${progress.total} combinations in background...`
+                    : 'Searching seat alternatives in background...'
                   : results.length > 0
                   ? 'Confirmed seat alternatives found for nearby stations/trains'
+                  : isCancelled
+                  ? 'Search stopped by user'
                   : isCompleted
                   ? 'Background search complete'
                   : 'Check confirmed seat options for nearby stations'
@@ -273,41 +325,67 @@ export const AlternateAvailabilityView: React.FC<AlternateAvailabilityViewProps>
           </div>
         </div>
 
-        {/* Dedicated Action Button */}
-        <button
-          type="button"
-          id={`check-alternate-btn-${trainNumber}-${travelClass}`}
-          onClick={isWL ? onToggleOpen : undefined}
-          disabled={!isWL}
-          title={
-            !isWL
-              ? 'Alternate availability search is only active when current status is Waitlisted (WL)'
-              : isOpen
-              ? 'Hide alternate availability options'
-              : 'Show already searched alternate availability options'
-          }
-          className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs select-none ${
-            !isWL
-              ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60'
-              : isOpen
-              ? 'bg-amber-600 text-white hover:bg-amber-700 border border-amber-600 cursor-pointer active:scale-95 shadow-amber-500/20'
-              : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white border border-amber-500 cursor-pointer active:scale-95 shadow-orange-500/20'
-          }`}
-        >
-          {isSearching && !isOpen ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
-          ) : (
-            <Sparkles className="w-3.5 h-3.5" />
+        {/* Dedicated Action Button & Stop Button */}
+        <div className="flex items-center gap-1.5">
+          {isSearching && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                stopSearch();
+              }}
+              title="Stop alternate search"
+              aria-label="Stop alternate search"
+              className="p-1.5 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 transition-colors cursor-pointer flex items-center justify-center shrink-0 shadow-2xs"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
           )}
-          <span>Check Alternate Availability</span>
-          {isWL && (
-            isOpen ? (
-              <ChevronUp className="w-3.5 h-3.5 text-white/90" />
+
+          <button
+            type="button"
+            id={`check-alternate-btn-${trainNumber}-${travelClass}`}
+            onClick={
+              isWL
+                ? () => {
+                    if (isCancelled) {
+                      startSearch();
+                    }
+                    handleToggleOpen();
+                  }
+                : undefined
+            }
+            disabled={!isWL}
+            title={
+              !isWL
+                ? 'Alternate availability search is only active when current status is Waitlisted (WL)'
+                : isOpen
+                ? 'Hide alternate availability options'
+                : 'Show already searched alternate availability options'
+            }
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-2xs select-none ${
+              !isWL
+                ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed opacity-60'
+                : isOpen
+                ? 'bg-amber-600 text-white hover:bg-amber-700 border border-amber-600 cursor-pointer active:scale-95 shadow-amber-500/20'
+                : 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white border border-amber-500 cursor-pointer active:scale-95 shadow-orange-500/20'
+            }`}
+          >
+            {isSearching && !isOpen ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
             ) : (
-              <ChevronDown className="w-3.5 h-3.5 text-white/90" />
-            )
-          )}
-        </button>
+              <Sparkles className="w-3.5 h-3.5" />
+            )}
+            <span>Check Alternate Availability</span>
+            {isWL && (
+              isOpen ? (
+                <ChevronUp className="w-3.5 h-3.5 text-white/90" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5 text-white/90" />
+              )
+            )}
+          </button>
+        </div>
       </div>
 
       {/* 2. Expanded Alternate Availability Results Sub-section */}
@@ -330,13 +408,31 @@ export const AlternateAvailabilityView: React.FC<AlternateAvailabilityViewProps>
 
             <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-600">
               {isSearching ? (
-                <div className="flex items-center gap-1 text-amber-700 bg-amber-100/80 border border-amber-200 px-2 py-0.5 rounded-full">
-                  <Loader2 className="w-3 h-3 animate-spin text-amber-600" />
-                  <span>
-                    {progress && progress.total > 0
-                      ? `Checking ${progress.checked}/${progress.total} (${progress.percent}%)`
-                      : 'Checking alternatives...'}
-                  </span>
+                <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1 text-amber-700 bg-amber-100/80 border border-amber-200 px-2 py-0.5 rounded-full">
+                    <Loader2 className="w-3 h-3 animate-spin text-amber-600" />
+                    <span>
+                      {progress && progress.total > 0
+                        ? `Checking ${progress.checked}/${progress.total} (${progress.percent}%)`
+                        : 'Checking alternatives...'}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      stopSearch();
+                    }}
+                    title="Stop alternate search"
+                    aria-label="Stop alternate search"
+                    className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 border border-amber-200 hover:border-rose-200 transition-colors cursor-pointer flex items-center justify-center shrink-0"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ) : isCancelled ? (
+                <div className="flex items-center gap-1 text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">
+                  <span>Search stopped</span>
                 </div>
               ) : isCompleted ? (
                 <div className="flex items-center gap-1 text-emerald-700 bg-emerald-100/80 border border-emerald-200 px-2 py-0.5 rounded-full">
