@@ -20,6 +20,38 @@ interface TrainRunningStatusPageProps {
   onNavigateToBooking?: () => void;
 }
 
+/**
+ * Validates whether a journey date is eligible for live NTES tracking.
+ * NTES live running status is only available for trains running Today, Yesterday, or Tomorrow.
+ * If the user searched a future date (e.g. 5 days ahead), fallback to Today to show live running status.
+ */
+function getValidLiveTrackingDate(inputDate?: string, todayISTStr?: string): {
+  targetDate: string;
+  isAdjustedFromFuture: boolean;
+} {
+  const today = todayISTStr ? new Date(todayISTStr) : new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (!inputDate) {
+    return { targetDate: formatDateToDDMMMYYYY(today), isAdjustedFromFuture: false };
+  }
+
+  const parsed = new Date(inputDate);
+  if (isNaN(parsed.getTime())) {
+    return { targetDate: formatDateToDDMMMYYYY(today), isAdjustedFromFuture: false };
+  }
+  parsed.setHours(0, 0, 0, 0);
+
+  const diffDays = Math.round((parsed.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+
+  // NTES live tracking is only available for trains within -3 to +1 days
+  if (diffDays > 1 || diffDays < -3) {
+    return { targetDate: formatDateToDDMMMYYYY(today), isAdjustedFromFuture: true };
+  }
+
+  return { targetDate: formatDateToDDMMMYYYY(parsed), isAdjustedFromFuture: false };
+}
+
 export const TrainRunningStatusPage: React.FC<TrainRunningStatusPageProps> = ({
   initialTrainNo,
   initialDate,
@@ -29,6 +61,7 @@ export const TrainRunningStatusPage: React.FC<TrainRunningStatusPageProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
   const [lastSearchedParams, setLastSearchedParams] = useState<{
     trainNo: string;
     date: string;
@@ -47,10 +80,17 @@ export const TrainRunningStatusPage: React.FC<TrainRunningStatusPageProps> = ({
   }, [initialTrainNo]);
 
   // If initialTrainNo was explicitly passed as a prop (e.g. from clicking "Spot Train" on a search result),
-  // only then optionally auto-search
+  // auto-search with valid live-tracking date
   useEffect(() => {
     if (initialTrainNo && /^\d{5}$/.test(initialTrainNo.trim())) {
-      const targetDate = initialDate ? formatDateToDDMMMYYYY(initialDate) : formatDateToDDMMMYYYY(todayIST);
+      const { targetDate, isAdjustedFromFuture } = getValidLiveTrackingDate(initialDate, todayIST);
+      if (isAdjustedFromFuture) {
+        setNoticeMessage(
+          `Showing today's live running status for Train ${initialTrainNo.trim()} (your searched travel date has not departed yet).`
+        );
+      } else {
+        setNoticeMessage(null);
+      }
       handleSearch(initialTrainNo.trim(), targetDate);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -116,11 +156,35 @@ export const TrainRunningStatusPage: React.FC<TrainRunningStatusPageProps> = ({
       <div className="w-full max-w-4xl space-y-4 sm:space-y-6">
         {/* Top Search Card - starts empty so user searches on their own */}
         <RunningStatusSearchForm
-          onSearch={(no, d) => handleSearch(no, d)}
+          onSearch={(no, d) => {
+            setNoticeMessage(null);
+            handleSearch(no, d);
+          }}
           isLoading={isLoading}
           initialTrainNo={initialTrainNo || ''}
-          initialDate={initialDate || todayIST}
+          initialDate={
+            initialDate
+              ? getValidLiveTrackingDate(initialDate, todayIST).targetDate
+              : todayIST
+          }
         />
+
+        {/* Informational notice when redirected with future travel date */}
+        {noticeMessage && (
+          <div className="w-full bg-blue-50/90 border border-blue-200 rounded-2xl p-3 sm:p-3.5 flex items-center justify-between gap-2 text-blue-900 shadow-2xs animate-in fade-in duration-200">
+            <div className="flex items-center gap-2 text-xs sm:text-sm font-medium">
+              <Info className="w-4 h-4 text-blue-600 shrink-0" />
+              <span>{noticeMessage}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setNoticeMessage(null)}
+              className="text-blue-400 hover:text-blue-700 text-xs font-bold p-1 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* Error Alert Display */}
         {errorMessage && (
