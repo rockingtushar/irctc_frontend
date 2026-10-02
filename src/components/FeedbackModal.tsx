@@ -13,6 +13,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { submitFeedback, FeedbackApiError } from '../api/feedback';
+import { normalizeApiError } from '../config/apiConfig';
 import { OrangeVandeBharatLogo } from './OrangeVandeBharatLogo';
 
 interface FeedbackModalProps {
@@ -143,11 +144,7 @@ export const FeedbackModal: React.FC<FeedbackModalProps> = ({ open, onClose }) =
       setRating(null);
       setCategory('General Feedback');
     } catch (err: unknown) {
-      if (err instanceof FeedbackApiError) {
-        setErrorMessage(err.message);
-      } else {
-        setErrorMessage('Unable to send feedback right now. Please try again.');
-      }
+      setErrorMessage(normalizeApiError(err, 'Unable to send feedback right now. Please try again.'));
     } finally {
       setIsSubmitting(false);
     }

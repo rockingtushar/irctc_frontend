@@ -12,6 +12,7 @@ import {
   TrainApiError,
 } from '../api/trains';
 import { getApiBaseUrl, setApiBaseUrl } from '../api/stations';
+import { normalizeApiError, SERVER_UNAVAILABLE_MESSAGE } from '../config/apiConfig';
 import { Train } from '../types/station';
 import { X, RefreshCw, ShieldCheck, AlertCircle, ArrowRight, Loader2, Settings, Globe, Check } from 'lucide-react';
 
@@ -75,7 +76,7 @@ export const CaptchaModal: React.FC<CaptchaModalProps> = ({
         setCaptchaBase64(startRes.captcha_image_base64);
       } catch (err: unknown) {
         console.warn('[CaptchaModal] Captcha init notice:', err);
-        const msg = err instanceof Error ? err.message : 'Unable to connect to backend server';
+        const msg = normalizeApiError(err, SERVER_UNAVAILABLE_MESSAGE);
         setErrorMessage(msg);
       } finally {
         setIsLoadingCaptcha(false);
@@ -165,7 +166,7 @@ export const CaptchaModal: React.FC<CaptchaModalProps> = ({
       setSessionId(freshRes.session_id);
       setCaptchaBase64(freshRes.captcha_image_base64);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to refresh captcha.';
+      const msg = normalizeApiError(err, 'Failed to refresh captcha.');
       setErrorMessage(msg);
     } finally {
       setIsRefreshing(false);
@@ -260,7 +261,7 @@ export const CaptchaModal: React.FC<CaptchaModalProps> = ({
         await initCaptcha();
       } else {
         // Other errors (e.g. network/500), do not destroy session unnecessarily
-        const msg = err instanceof Error && err.message ? err.message : 'Unable to fetch trains right now. Please try again.';
+        const msg = normalizeApiError(err, 'Unable to fetch trains right now. Please try again.');
         setErrorMessage(msg);
       }
     }

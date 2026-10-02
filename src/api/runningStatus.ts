@@ -1,4 +1,13 @@
-import { getApiBaseUrl, getCandidateApiUrls } from '../config/apiConfig';
+import {
+  getApiBaseUrl,
+  getCandidateApiUrls,
+  SERVER_UNAVAILABLE_MESSAGE,
+  SERVER_TIMEOUT_MESSAGE,
+  isNetworkOrConnectionError,
+  isTimeoutError,
+  sanitizeBackendError,
+  parseHttpResponseError,
+} from '../config/apiConfig';
 import {
   RunningStatusRequestBody,
   RunningStatusResponse,
@@ -10,7 +19,7 @@ import { arrTrainList } from '../data/train_data.js';
 export class RunningStatusApiError extends Error {
   status: number;
   constructor(message: string, status = 500) {
-    super(message);
+    super(sanitizeBackendError(message, status));
     this.name = 'RunningStatusApiError';
     this.status = status;
   }
@@ -275,8 +284,9 @@ export async function fetchTrainRoute(trainNumber: string): Promise<RunningStatu
       if (response.status === 502) {
         const errBody = await response.json().catch(() => null);
         const detail = typeof errBody?.detail === 'string' ? errBody.detail : '';
+        const safeDetail = sanitizeBackendError(detail, 502);
         lastError = new RunningStatusApiError(
-          detail || `Route record was not found for Train ${cleanTrainNo}.`,
+          safeDetail !== SERVER_UNAVAILABLE_MESSAGE ? safeDetail : `Route record was not found for Train ${cleanTrainNo}.`,
           502
         );
         continue;
@@ -284,8 +294,12 @@ export async function fetchTrainRoute(trainNumber: string): Promise<RunningStatu
 
       if (!response.ok) {
         const errBody = await response.json().catch(() => null);
-        const msg = errBody?.detail || errBody?.message || `Railway server returned HTTP ${response.status}`;
-        lastError = new RunningStatusApiError(String(msg), response.status);
+        const msg = parseHttpResponseError(
+          response.status,
+          errBody,
+          `Unable to retrieve route for train ${cleanTrainNo}.`
+        );
+        lastError = new RunningStatusApiError(msg, response.status);
         continue;
       }
 
@@ -295,22 +309,12 @@ export async function fetchTrainRoute(trainNumber: string): Promise<RunningStatu
       }
     } catch (err: unknown) {
       clearTimeout(timeoutId);
-      const isAbort =
-        err instanceof Error &&
-        (err.name === 'AbortError' || err.message.includes('aborted'));
-      if (isAbort) {
-        lastError = new RunningStatusApiError(
-          'Railway route server took too long to respond. Tap Retry to fetch again.',
-          408
-        );
+      if (isTimeoutError(err)) {
+        lastError = new RunningStatusApiError(SERVER_TIMEOUT_MESSAGE, 408);
+      } else if (isNetworkOrConnectionError(err)) {
+        lastError = new RunningStatusApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
       } else {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        lastError = new RunningStatusApiError(
-          errMsg.includes('Failed to fetch')
-            ? 'Unable to connect to railway route service. Please check your connection or tap Retry.'
-            : errMsg,
-          500
-        );
+        lastError = new RunningStatusApiError(sanitizeBackendError(err), 500);
       }
     }
   }
@@ -319,10 +323,7 @@ export async function fetchTrainRoute(trainNumber: string): Promise<RunningStatu
     throw lastError;
   }
 
-  throw new RunningStatusApiError(
-    `Unable to retrieve route for train ${cleanTrainNo}. Please verify the train number.`,
-    500
-  );
+  throw new RunningStatusApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
 }
 
 /**
@@ -338,11 +339,7 @@ export async function fetchRunningStatus(
     throw new RunningStatusApiError('Please enter a valid 5-digit train number (e.g. 15132 or 12555).', 400);
   }
 
-  const candidateEndpoints = [
-    ...getCandidateApiUrls('/api/trains/running-status'),
-    ...getCandidateApiUrls('/trains/running-status'),
-  ];
-
+  const candidateEndpoints = getCandidateApiUrls('/api/trains/running-status');
   const uniqueEndpoints = Array.from(new Set(candidateEndpoints));
   const requestBody = {
     train_no: cleanTrainNo,
@@ -353,8 +350,8 @@ export async function fetchRunningStatus(
 
   for (const url of uniqueEndpoints) {
     const controller = new AbortController();
-    // Allow up to 28 seconds for the live NTES railway scraper to retrieve all station records
-    const timeoutId = setTimeout(() => controller.abort(), 28000);
+    // Allow up to 15 seconds for live NTES scraper per candidate endpoint before failing over
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
       const response = await fetch(url, {
@@ -381,8 +378,9 @@ export async function fetchRunningStatus(
       if (response.status === 502) {
         const errBody = await response.json().catch(() => null);
         const detail = typeof errBody?.detail === 'string' ? errBody.detail : '';
+        const safeDetail = sanitizeBackendError(detail, 502);
         lastError = new RunningStatusApiError(
-          detail || `Live NTES tracking record was not found for Train ${cleanTrainNo} on ${cleanJourneyDate}.`,
+          safeDetail !== SERVER_UNAVAILABLE_MESSAGE ? safeDetail : `Live tracking record was not found for Train ${cleanTrainNo} on ${cleanJourneyDate}.`,
           502
         );
         continue;
@@ -390,8 +388,12 @@ export async function fetchRunningStatus(
 
       if (!response.ok) {
         const errBody = await response.json().catch(() => null);
-        const msg = errBody?.detail || errBody?.message || `Railway server returned HTTP ${response.status}`;
-        lastError = new RunningStatusApiError(String(msg), response.status);
+        const msg = parseHttpResponseError(
+          response.status,
+          errBody,
+          `Unable to retrieve live running status for train ${cleanTrainNo}.`
+        );
+        lastError = new RunningStatusApiError(msg, response.status);
         continue;
       }
 
@@ -401,28 +403,21 @@ export async function fetchRunningStatus(
       }
     } catch (err: unknown) {
       clearTimeout(timeoutId);
-      const isAbort =
-        err instanceof Error &&
-        (err.name === 'AbortError' || err.message.includes('aborted'));
-      if (isAbort) {
-        lastError = new RunningStatusApiError(
-          'Live railway server request timed out after 28 seconds. Please check your connection or tap Refresh.',
-          408
-        );
+      if (isTimeoutError(err)) {
+        lastError = new RunningStatusApiError(SERVER_TIMEOUT_MESSAGE, 408);
+      } else if (isNetworkOrConnectionError(err)) {
+        lastError = new RunningStatusApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
       } else {
-        lastError = err instanceof Error ? err : new Error(String(err));
+        lastError = new RunningStatusApiError(sanitizeBackendError(err), 500);
       }
     }
   }
 
-  // Throw authentic error from backend instead of hiding with fake mock data
+  // Throw authentic sanitized error from backend
   if (lastError) {
     throw lastError;
   }
 
-  throw new RunningStatusApiError(
-    `Unable to retrieve live running status for train ${cleanTrainNo}. Please verify the train number and date.`,
-    500
-  );
+  throw new RunningStatusApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
 }
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { RunningStatusData } from '../types/runningStatus';
 import { fetchRunningStatus, RunningStatusApiError, formatDateToDDMMMYYYY } from '../api/runningStatus';
+import { normalizeApiError } from '../config/apiConfig';
 import { RunningStatusSearchForm } from '../components/runningStatus/RunningStatusSearchForm';
 import { LiveTrainTrackVisualizer } from '../components/runningStatus/LiveTrainTrackVisualizer';
 import { getIndianRailwaysTodayString } from '../utils/dateUtils';
@@ -130,13 +131,7 @@ export const TrainRunningStatusPage: React.FC<TrainRunningStatusPageProps> = ({
           }, 150);
         }
       } catch (err: unknown) {
-        if (err instanceof RunningStatusApiError) {
-          setErrorMessage(err.message);
-        } else if (err instanceof Error) {
-          setErrorMessage(err.message);
-        } else {
-          setErrorMessage('An unexpected error occurred while fetching running status.');
-        }
+        setErrorMessage(normalizeApiError(err, 'Unable to retrieve running status. Please try again.'));
       } finally {
         setIsLoading(false);
         setIsRefreshing(false);

@@ -11,7 +11,16 @@
  *  - Coach Berth Composition Layouts
  */
 
-import { getApiBaseUrl, getCandidateApiUrls } from '../config/apiConfig';
+import {
+  getApiBaseUrl,
+  getCandidateApiUrls,
+  SERVER_UNAVAILABLE_MESSAGE,
+  SERVER_TIMEOUT_MESSAGE,
+  isNetworkOrConnectionError,
+  isTimeoutError,
+  sanitizeBackendError,
+  parseHttpResponseError,
+} from '../config/apiConfig';
 import {
   ChartTrainRequest,
   ChartTrainResponse,
@@ -28,7 +37,7 @@ import { normalizeBerthCode } from '../utils/berthUtils';
 export class ChartApiError extends Error {
   status: number;
   constructor(message: string, status = 500) {
-    super(message);
+    super(sanitizeBackendError(message, status));
     this.name = 'ChartApiError';
     this.status = status;
   }
@@ -108,19 +117,17 @@ async function postChartRequest<T>(endpointPath: string, payload: unknown): Prom
       }
 
       if (!response.ok) {
-        let errorMsg = `Server error (HTTP ${response.status})`;
+        let errBody: unknown = null;
         try {
-          const errBody = await response.json();
-          if (errBody?.detail) {
-            errorMsg = typeof errBody.detail === 'string' ? errBody.detail : JSON.stringify(errBody.detail);
-          } else if (errBody?.error) {
-            errorMsg = errBody.error;
-          } else if (errBody?.message) {
-            errorMsg = errBody.message;
-          }
+          errBody = await response.json();
         } catch {
           // ignore json parse error
         }
+        const errorMsg = parseHttpResponseError(
+          response.status,
+          errBody,
+          'Unable to fetch train chart vacancy.'
+        );
         throw new ChartApiError(errorMsg, response.status);
       }
 
@@ -130,7 +137,13 @@ async function postChartRequest<T>(endpointPath: string, payload: unknown): Prom
       if (err instanceof ChartApiError) {
         throw err;
       }
-      lastError = err as Error;
+      if (isTimeoutError(err)) {
+        lastError = new ChartApiError(SERVER_TIMEOUT_MESSAGE, 408);
+      } else if (isNetworkOrConnectionError(err)) {
+        lastError = new ChartApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
+      } else {
+        lastError = err as Error;
+      }
       // If there are more candidate URLs, continue to next
       if (i < urls.length - 1) {
         continue;
@@ -138,10 +151,17 @@ async function postChartRequest<T>(endpointPath: string, payload: unknown): Prom
     }
   }
 
-  throw new ChartApiError(
-    lastError?.message || 'Unable to connect to Chart server. Please check your network or try again.',
-    503
-  );
+  if (lastError instanceof ChartApiError) {
+    throw lastError;
+  }
+  if (isTimeoutError(lastError)) {
+    throw new ChartApiError(SERVER_TIMEOUT_MESSAGE, 408);
+  }
+  if (isNetworkOrConnectionError(lastError)) {
+    throw new ChartApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
+  }
+
+  throw new ChartApiError(SERVER_UNAVAILABLE_MESSAGE, 503);
 }
 
 /**
@@ -450,19 +470,17 @@ export async function getChartRequest<T>(endpointPath: string): Promise<T> {
       }
 
       if (!response.ok) {
-        let errorMsg = `Server error (HTTP ${response.status})`;
+        let errBody: unknown = null;
         try {
-          const errBody = await response.json();
-          if (errBody?.detail) {
-            errorMsg = typeof errBody.detail === 'string' ? errBody.detail : JSON.stringify(errBody.detail);
-          } else if (errBody?.error) {
-            errorMsg = errBody.error;
-          } else if (errBody?.message) {
-            errorMsg = errBody.message;
-          }
+          errBody = await response.json();
         } catch {
           // ignore
         }
+        const errorMsg = parseHttpResponseError(
+          response.status,
+          errBody,
+          'Train schedule could not be loaded.'
+        );
         throw new ChartApiError(errorMsg, response.status);
       }
 
@@ -472,17 +490,30 @@ export async function getChartRequest<T>(endpointPath: string): Promise<T> {
       if (err instanceof ChartApiError) {
         throw err;
       }
-      lastError = err as Error;
+      if (isTimeoutError(err)) {
+        lastError = new ChartApiError(SERVER_TIMEOUT_MESSAGE, 408);
+      } else if (isNetworkOrConnectionError(err)) {
+        lastError = new ChartApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
+      } else {
+        lastError = err as Error;
+      }
       if (i < urls.length - 1) {
         continue;
       }
     }
   }
 
-  throw new ChartApiError(
-    lastError?.message || 'Train schedule could not be loaded.',
-    503
-  );
+  if (lastError instanceof ChartApiError) {
+    throw lastError;
+  }
+  if (isTimeoutError(lastError)) {
+    throw new ChartApiError(SERVER_TIMEOUT_MESSAGE, 408);
+  }
+  if (isNetworkOrConnectionError(lastError)) {
+    throw new ChartApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
+  }
+
+  throw new ChartApiError(SERVER_UNAVAILABLE_MESSAGE, 503);
 }
 
 // Re-export schedule methods and cache handlers from trainService

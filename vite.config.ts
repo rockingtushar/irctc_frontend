@@ -75,6 +75,28 @@ export default defineConfig(({ mode }) => {
             });
           },
         },
+        '/api/trains/running-status': {
+          target: ntesBackend,
+          changeOrigin: true,
+          secure: false,
+          timeout: 45000,
+          proxyTimeout: 45000,
+          headers: {
+            'X-Tunnel-Skip-Anti-Abuse-Page': 'true',
+          },
+          configure: (proxy) => {
+            proxy.on('error', (err, _req, res) => {
+              console.warn('[api-trains-running-status-proxy-error]', err?.message || err);
+              if (res && 'writeHead' in res && !res.headersSent) {
+                res.writeHead(502, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ success: false, error: 'Proxy gateway error' }));
+              }
+            });
+            proxy.on('proxyRes', (proxyRes, req) => {
+              setCorsResponseHeaders(proxyRes, req);
+            });
+          },
+        },
         '/train/route': {
           target: ntesBackend,
           changeOrigin: true,

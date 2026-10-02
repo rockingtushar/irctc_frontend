@@ -7,7 +7,16 @@
  *  - POST /api/pnr/status  { pnr, captcha_answer, session_id }
  */
 
-import { getApiBaseUrl, getCandidateApiUrls } from '../config/apiConfig';
+import {
+  getApiBaseUrl,
+  getCandidateApiUrls,
+  SERVER_UNAVAILABLE_MESSAGE,
+  SERVER_TIMEOUT_MESSAGE,
+  isNetworkOrConnectionError,
+  isTimeoutError,
+  sanitizeBackendError,
+  parseHttpResponseError,
+} from '../config/apiConfig';
 import {
   PnrData,
   PnrResponse,
@@ -19,7 +28,7 @@ import {
 export class PnrApiError extends Error {
   status: number;
   constructor(message: string, status = 500) {
-    super(message);
+    super(sanitizeBackendError(message, status));
     this.name = 'PnrApiError';
     this.status = status;
   }
@@ -220,20 +229,16 @@ function normalizeFetchError(err: unknown, timeoutMessage: string): Error {
   ) {
     return err;
   }
-  if (err instanceof Error) {
-    const lower = (err.message || '').toLowerCase();
-    if (err.name === 'AbortError' || lower.includes('abort') || lower.includes('timeout')) {
-      return new PnrApiError(timeoutMessage, 408);
-    }
-    if (lower.includes('failed to fetch') || lower.includes('networkerror')) {
-      return new PnrApiError(
-        'Backend IRCTC server is currently unreachable. Please check connection.',
-        0
-      );
-    }
-    return err;
+  if (isTimeoutError(err)) {
+    return new PnrApiError(SERVER_TIMEOUT_MESSAGE, 408);
   }
-  return new Error(String(err));
+  if (isNetworkOrConnectionError(err)) {
+    return new PnrApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
+  }
+  if (err instanceof Error) {
+    return new PnrApiError(sanitizeBackendError(err.message), 500);
+  }
+  return new PnrApiError(SERVER_UNAVAILABLE_MESSAGE, 500);
 }
 
 /**
@@ -264,7 +269,7 @@ export async function createPnrSession(attempt = 1): Promise<string> {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
-        const msg = errorData?.detail || errorData?.message || `Server returned HTTP ${response.status}`;
+        const msg = parseHttpResponseError(response.status, errorData, 'Unable to create PNR session.');
         lastError = new PnrApiError(msg, response.status);
         continue;
       }
@@ -335,8 +340,8 @@ export async function getPnrCaptcha(sessionId: string, attempt = 1): Promise<str
 
       if (!response.ok) {
         const errJson = await response.json().catch(() => null);
-        const msg = errJson?.detail || errJson?.message;
-        lastError = new PnrApiError(msg || 'Security CAPTCHA unavailable. Retrying...', response.status);
+        const msg = parseHttpResponseError(response.status, errJson, 'Security CAPTCHA unavailable. Retrying...');
+        lastError = new PnrApiError(msg, response.status);
         continue;
       }
 
@@ -519,7 +524,11 @@ export async function getPnrStatus(
       }
 
       if (!response.ok) {
-        const msg = jsonResult.detail || jsonResult.message || `Server returned HTTP ${response.status}`;
+        const msg = parseHttpResponseError(
+          response.status,
+          jsonResult,
+          'Unable to fetch PNR status right now. Please try again.'
+        );
         lastError = new PnrApiError(msg, response.status);
         continue;
       }
@@ -540,15 +549,10 @@ export async function getPnrStatus(
         throw err;
       }
 
-      const isAbort =
-        err instanceof Error &&
-        (err.name === 'AbortError' || err.message.includes('aborted'));
-
-      if (isAbort) {
-        lastError = new PnrApiError(
-          'PNR status request timed out. Indian Railways server is taking longer than usual. Please try again.',
-          408
-        );
+      if (isTimeoutError(err)) {
+        lastError = new PnrApiError(SERVER_TIMEOUT_MESSAGE, 408);
+      } else if (isNetworkOrConnectionError(err)) {
+        lastError = new PnrApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
       } else {
         lastError = err instanceof Error ? err : new Error(String(err));
       }
@@ -559,12 +563,13 @@ export async function getPnrStatus(
     throw lastError;
   }
 
-  if (lastError?.message?.includes('Failed to fetch') || lastError?.message?.includes('NetworkError')) {
-    throw new PnrApiError(
-      'Unable to connect to IRCTC server. Please check your connection and try again.',
-      0
-    );
+  if (isTimeoutError(lastError)) {
+    throw new PnrApiError(SERVER_TIMEOUT_MESSAGE, 408);
   }
 
-  throw lastError || new PnrApiError('Unable to fetch PNR status. Please try again.', 500);
+  if (isNetworkOrConnectionError(lastError)) {
+    throw new PnrApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
+  }
+
+  throw lastError || new PnrApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
 }

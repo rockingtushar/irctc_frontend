@@ -1,4 +1,13 @@
-import { getApiBaseUrl, getCandidateApiUrls } from '../config/apiConfig';
+import {
+  getApiBaseUrl,
+  getCandidateApiUrls,
+  sanitizeApiErrorMessage,
+  parseHttpResponseError,
+  isNetworkOrConnectionError,
+  isTimeoutError,
+  SERVER_UNAVAILABLE_MESSAGE,
+  SERVER_TIMEOUT_MESSAGE,
+} from '../config/apiConfig';
 import {
   CaptchaStartResponse,
   CaptchaRefreshResponse,
@@ -14,14 +23,14 @@ const TRAIN_SESSION_KEY = 'rail_train_session_id';
 
 export class InvalidCaptchaError extends Error {
   constructor(message = 'Incorrect captcha. A new captcha has been loaded.') {
-    super(message);
+    super(sanitizeApiErrorMessage(message));
     this.name = 'InvalidCaptchaError';
   }
 }
 
 export class SessionExpiredError extends Error {
   constructor(message = 'Session expired, please solve captcha again.') {
-    super(message);
+    super(sanitizeApiErrorMessage(message));
     this.name = 'SessionExpiredError';
   }
 }
@@ -29,7 +38,8 @@ export class SessionExpiredError extends Error {
 export class TrainApiError extends Error {
   status: number;
   constructor(message: string, status = 500) {
-    super(message);
+    const sanitized = sanitizeApiErrorMessage(message);
+    super(sanitized);
     this.name = 'TrainApiError';
     this.status = status;
   }
@@ -105,19 +115,19 @@ export async function startCaptchaSession(): Promise<CaptchaStartResponse> {
       } else if (response.status >= 500) {
         // Fallback to next candidate endpoint
         const errBody = await response.json().catch(() => null);
-        const msg = errBody?.detail || errBody?.message || response.statusText;
-        lastError = new Error(`Server returned HTTP ${response.status}: ${msg}`);
+        const msg = parseHttpResponseError(response.status, errBody, 'Unable to start captcha session.');
+        lastError = new TrainApiError(msg, response.status);
       } else {
         const errBody = await response.json().catch(() => null);
-        const msg = errBody?.detail || errBody?.message || response.statusText;
-        throw new TrainApiError(`Server error (${response.status}): ${msg}`, response.status);
+        const msg = parseHttpResponseError(response.status, errBody, 'Unable to start captcha session.');
+        throw new TrainApiError(msg, response.status);
       }
     } catch (err: unknown) {
       clearTimeout(timeoutId);
       if (err instanceof TrainApiError && err.status < 500) {
         throw err;
       }
-      const isAbort = err instanceof Error && (err.name === 'AbortError' || err.message.includes('aborted'));
+      const isAbort = isTimeoutError(err);
       if (!isAbort) {
         lastError = err instanceof Error ? err : new Error(String(err));
       }
@@ -125,17 +135,16 @@ export async function startCaptchaSession(): Promise<CaptchaStartResponse> {
   }
 
   if (lastError) {
-    const msg = lastError.message || 'Failed to fetch';
-    if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-      throw new TrainApiError(
-        `Backend server is waking up. Please tap Search again.`,
-        0
-      );
+    if (isNetworkOrConnectionError(lastError)) {
+      throw new TrainApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
     }
-    throw new TrainApiError(`Unable to start captcha session: ${msg}`, 0);
+    if (isTimeoutError(lastError)) {
+      throw new TrainApiError(SERVER_TIMEOUT_MESSAGE, 408);
+    }
+    throw new TrainApiError(sanitizeApiErrorMessage(lastError, 'Unable to start captcha session.'), 0);
   }
 
-  throw new TrainApiError(`Could not reach CAPTCHA endpoint on ${baseUrl || 'server'}. Check server status and URL configuration.`, 0);
+  throw new TrainApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
 }
 
 /**
@@ -184,8 +193,8 @@ export async function refreshCaptcha(sessionId: string): Promise<CaptchaRefreshR
         return data;
       } else {
         const errBody = await response.json().catch(() => null);
-        const msg = errBody?.detail || errBody?.message || response.statusText;
-        throw new TrainApiError(`Failed to refresh captcha: ${msg}`, response.status);
+        const msg = parseHttpResponseError(response.status, errBody, 'Failed to refresh captcha.');
+        throw new TrainApiError(msg, response.status);
       }
     } catch (err: unknown) {
       clearTimeout(timeoutId);
@@ -195,7 +204,7 @@ export async function refreshCaptcha(sessionId: string): Promise<CaptchaRefreshR
       if (err instanceof TrainApiError && err.status < 500) {
         throw err;
       }
-      const isAbort = err instanceof Error && (err.name === 'AbortError' || err.message.includes('aborted'));
+      const isAbort = isTimeoutError(err);
       if (!isAbort) {
         lastError = err instanceof Error ? err : new Error(String(err));
       }
@@ -203,17 +212,16 @@ export async function refreshCaptcha(sessionId: string): Promise<CaptchaRefreshR
   }
 
   if (lastError) {
-    const msg = lastError.message || 'Failed to fetch';
-    if (msg.includes('Failed to fetch') || msg.includes('NetworkError')) {
-      throw new TrainApiError(
-        `Backend server at ${baseUrl || 'configured endpoint'} is unreachable. Check your network connection.`,
-        0
-      );
+    if (isNetworkOrConnectionError(lastError)) {
+      throw new TrainApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
     }
-    throw new TrainApiError(`Failed to refresh captcha: ${msg}`, 0);
+    if (isTimeoutError(lastError)) {
+      throw new TrainApiError(SERVER_TIMEOUT_MESSAGE, 408);
+    }
+    throw new TrainApiError(sanitizeApiErrorMessage(lastError, 'Failed to refresh captcha.'), 0);
   }
 
-  throw new TrainApiError('Unable to refresh captcha from server.', 0);
+  throw new TrainApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
 }
 
 /**
@@ -306,18 +314,19 @@ export async function searchTrains(payload: TrainSearchRequestBody): Promise<Tra
         if (response.status === 404 || response.status >= 500) {
           // Continue to next candidate endpoint
           const errBody = await response.json().catch(() => null);
-          const msg = errBody?.detail || errBody?.message || `Server returned HTTP ${response.status}`;
-          lastError = new Error(msg);
+          const msg = parseHttpResponseError(response.status, errBody, 'Unable to fetch trains right now. Please try again.');
+          lastError = new TrainApiError(msg, response.status);
           break;
         }
 
         if (!response.ok) {
           const errBody = await response.json().catch(() => null);
-          const msg = errBody?.detail || errBody?.message || `Server returned HTTP ${response.status} (${response.statusText})`;
-          throw new TrainApiError(
-            typeof msg === 'string' && msg ? msg : 'Unable to fetch trains right now. Please try again.',
-            response.status
+          const msg = parseHttpResponseError(
+            response.status,
+            errBody,
+            'Unable to fetch trains right now. Please try again.'
           );
+          throw new TrainApiError(msg, response.status);
         }
 
         const data: TrainSearchResponse = await response.json();
@@ -345,17 +354,16 @@ export async function searchTrains(payload: TrainSearchRequestBody): Promise<Tra
       clearTrainSessionId();
       throw new SessionExpiredError('Saved session expired or dropped. Please verify captcha.');
     }
-    const errMessage = lastError.message || 'Failed to fetch';
-    if (errMessage.includes('Failed to fetch') || errMessage.includes('NetworkError')) {
-      throw new TrainApiError(
-        `Backend server is waking up or dropped connection (Failed to fetch). Please tap Search again.`,
-        0
-      );
+    if (isNetworkOrConnectionError(lastError)) {
+      throw new TrainApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
     }
-    throw new TrainApiError(`Connection error: ${errMessage}`, 0);
+    if (isTimeoutError(lastError)) {
+      throw new TrainApiError(SERVER_TIMEOUT_MESSAGE, 408);
+    }
+    throw new TrainApiError(sanitizeApiErrorMessage(lastError, 'Unable to fetch trains right now. Please try again.'), 0);
   }
 
-  throw new TrainApiError('Search endpoint not reachable on backend server.', 0);
+  throw new TrainApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
 }
 
 export function toStandardYYYYMMDD(dateStr?: string): string {
@@ -617,14 +625,12 @@ export async function fetchTrainAvailability(
 
         if (!response.ok) {
           const errBody = await response.json().catch(() => null);
-          const msg =
-            errBody?.detail ||
-            errBody?.message ||
-            `Server returned HTTP ${response.status} (${response.statusText})`;
-          throw new TrainApiError(
-            typeof msg === 'string' && msg ? msg : `Unable to fetch availability for ${payload.class_code || payload.travel_class}.`,
-            response.status
+          const msg = parseHttpResponseError(
+            response.status,
+            errBody,
+            `Unable to fetch availability for ${payload.class_code || payload.travel_class}.`
           );
+          throw new TrainApiError(msg, response.status);
         }
 
         const rawJson = (await response.json()) as Record<string, unknown>;
@@ -640,9 +646,9 @@ export async function fetchTrainAvailability(
         if (error instanceof SessionExpiredError || error instanceof TrainApiError) {
           throw error;
         }
-        const isAbort = error instanceof Error && (error.name === 'AbortError' || error.message.includes('aborted'));
+        const isAbort = isTimeoutError(error);
         if (isAbort) {
-          lastError = new Error('Request timed out. Please try again.');
+          lastError = new TrainApiError(SERVER_TIMEOUT_MESSAGE, 408);
         } else {
           lastError = error instanceof Error ? error : new Error(String(error));
         }
@@ -654,15 +660,17 @@ export async function fetchTrainAvailability(
   }
 
   if (lastError) {
-    const errMessage = lastError.message || 'Failed to fetch';
-    if (errMessage.includes('Failed to fetch') || errMessage.includes('NetworkError')) {
-      throw new TrainApiError(
-        `Backend server at ${baseUrl} is unreachable or dropped connection. Please ensure your FastAPI backend is running and tunnel/port is active.`,
-        0
-      );
+    if (isNetworkOrConnectionError(lastError)) {
+      throw new TrainApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
     }
-    throw new TrainApiError(`Availability Error: ${errMessage}`, 0);
+    if (isTimeoutError(lastError)) {
+      throw new TrainApiError(SERVER_TIMEOUT_MESSAGE, 408);
+    }
+    throw new TrainApiError(
+      sanitizeApiErrorMessage(lastError, `Unable to fetch availability for ${payload.class_code || payload.travel_class}.`),
+      0
+    );
   }
 
-  throw new TrainApiError('Availability endpoint not reachable on backend server.', 0);
+  throw new TrainApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
 }

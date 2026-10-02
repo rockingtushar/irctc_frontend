@@ -3,6 +3,7 @@ import { StationsProvider } from './context/StationsContext';
 import { Header } from './components/Header';
 import { MobileBottomNav } from './components/MobileBottomNav';
 import { initBackendWarmup } from './services/backendWarmup';
+import { stopAllAlternateSearches } from './services/alternateAvailabilityService';
 import { HomePage } from './pages/HomePage';
 import { TrainRunningStatusPage } from './pages/TrainRunningStatusPage';
 import { PnrStatusPage } from './pages/PnrStatusPage';
@@ -55,6 +56,9 @@ export default function App() {
   }, []);
 
   const handleOpenSpotYourTrain = useCallback((trainNo?: string, date?: string) => {
+    // Release background SSE connections & polling before moving to live tracking
+    stopAllAlternateSearches();
+
     if (trainNo && /^\d{5}$/.test(trainNo.trim())) {
       setActiveRunningStatusParams({ trainNo: trainNo.trim(), date });
       navigateTo('/train-running-status', { train_no: trainNo.trim(), journey_date: date || '' });

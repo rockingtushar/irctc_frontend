@@ -9,7 +9,13 @@
  * 5. Provides immediate synchronous access to already-received results.
  */
 
-import { getApiBaseUrl, getCandidateApiUrls } from '../config/apiConfig';
+import {
+  getApiBaseUrl,
+  getCandidateApiUrls,
+  SERVER_UNAVAILABLE_MESSAGE,
+  normalizeApiError,
+  sanitizeBackendError,
+} from '../config/apiConfig';
 import { getSavedTrainSessionId, startCaptchaSession, toStandardYYYYMMDD } from '../api/trains';
 import { DEFAULT_MAJOR_STATIONS } from '../data/defaultStations';
 import {
@@ -625,8 +631,51 @@ function updateState(
  * 3. Preserves all already-found results.
  * 4. Prevents late events from reviving or altering the state.
  */
+/**
+ * Manually stops an active alternate availability search:
+ * 1. Sends fire-and-forget POST to backend /api/trains/alternate/cancel/{jobId} to stop server background task.
+ * 2. Aborts the active SSE stream & status polling via existing AbortController.
+ * 3. Sets status to 'cancelled'.
+ * 4. Preserves all already-found results.
+ * 5. Prevents late events from reviving or altering the state.
+ */
 export function stopAlternateAvailability(searchKey: string): void {
-  // 1. Immediately abort active SSE stream
+  // 1. Get current search state & read existing jobId
+  const current = getAlternateSearchState(searchKey);
+  const jobId = current?.jobId;
+  const isRunning = current && (current.status === 'starting' || current.status === 'searching');
+
+  // 2. Fire-and-forget backend cancellation if jobId exists and status is starting or searching
+  if (jobId && isRunning) {
+    const cancelCandidateUrls = getCandidateApiUrls(
+      `/api/trains/alternate/cancel/${encodeURIComponent(jobId)}`
+    );
+    // Non-blocking fire-and-forget call; UI cancellation is never delayed
+    (async () => {
+      for (const url of cancelCandidateUrls) {
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/json',
+              'X-Tunnel-Skip-Anti-Abuse-Page': 'true',
+            },
+          });
+          if (res.ok) {
+            console.log(`[AlternateAvailabilityService] Backend alternate job ${jobId} cancelled successfully via ${url}`);
+            break;
+          }
+        } catch (err) {
+          console.error('[AlternateAvailabilityService] Backend cancellation error:', err);
+        }
+      }
+    })().catch((err) => {
+      console.error('[AlternateAvailabilityService] Backend cancel request failed:', err);
+    });
+  }
+
+  // 3. Immediately abort active SSE stream
   const ctrl = activeStreamControllers.get(searchKey);
   if (ctrl) {
     try {
@@ -637,9 +686,8 @@ export function stopAlternateAvailability(searchKey: string): void {
     activeStreamControllers.delete(searchKey);
   }
 
-  // 2. Mark state as cancelled without clearing results
-  const current = getAlternateSearchState(searchKey);
-  if (current && (current.status === 'starting' || current.status === 'searching')) {
+  // 4. Mark state as cancelled without clearing results
+  if (isRunning) {
     const updated: AlternateSearchState = {
       ...current,
       status: 'cancelled',
@@ -648,6 +696,18 @@ export function stopAlternateAvailability(searchKey: string): void {
     notifySubscribers(searchKey, updated);
     console.log(`[AlternateAvailabilityService] Search manually cancelled for ${searchKey}`);
   }
+}
+
+/**
+ * Cancels all active background alternate availability searches and aborts open SSE streams.
+ * Frees browser connection pool slots when navigating away from search results.
+ */
+export function stopAllAlternateSearches(): void {
+  const keys = Array.from(activeStreamControllers.keys());
+  for (const key of keys) {
+    stopAlternateAvailability(key);
+  }
+  activeStreamControllers.clear();
 }
 
 /**
@@ -872,7 +932,7 @@ async function runAlternateJobInBackground(
   }
 
   if (!jobId) {
-    const errMsg = lastStartError?.message || 'Failed to start alternate availability search on server.';
+    const errMsg = normalizeApiError(lastStartError, SERVER_UNAVAILABLE_MESSAGE);
     console.warn(`[AlternateAvailabilityService] Could not start alternate search:`, errMsg);
     updateState(searchKey, (prev) => ({
       status: 'error',
@@ -969,9 +1029,20 @@ async function pollAlternateJobStatus(
         signal,
       });
 
-      if (!res.ok) continue;
+      if (!res.ok) {
+        if (res.status === 404 || res.status === 410) {
+          // Job not found on backend (e.g. expired or invalid job_id)
+          break;
+        }
+        continue;
+      }
 
       const data = (await res.json()) as Record<string, unknown>;
+
+      // Check if job is expired or not found
+      if (typeof data.detail === 'string' && data.detail.toLowerCase().includes('not found')) {
+        break;
+      }
 
       // Track live progress stats
       const checked = typeof data.checked === 'number' ? data.checked : undefined;
@@ -1021,8 +1092,22 @@ async function pollAlternateJobStatus(
       const statusStr = String(data.status || '').toLowerCase();
       if (statusStr === 'completed' || statusStr === 'done' || statusStr === 'finished') {
         console.log(`[AlternateAvailabilityService] Status poller detected completed in ${pollCount} polls for ${searchKey}`);
-        // Requirement 1: Status polling must NOT abort an active SSE connection merely because it received completed.
-        // It simply stops its own polling loop and lets the SSE stream receive its own completed event.
+        // Allow SSE stream 2.5 seconds to receive its own completed event; if it doesn't, finalize state and release connection
+        setTimeout(() => {
+          const ctrl = activeStreamControllers.get(searchKey);
+          if (ctrl) {
+            try {
+              ctrl.abort();
+            } catch {
+              // ignore
+            }
+            activeStreamControllers.delete(searchKey);
+          }
+          const s = getAlternateSearchState(searchKey);
+          if (s && s.status === 'searching') {
+            updateState(searchKey, () => ({ status: 'completed' }));
+          }
+        }, 2500);
         break;
       }
 
@@ -1183,7 +1268,7 @@ async function connectToAlternateSseStream(
     } else {
       updateState(searchKey, () => ({
         status: 'error',
-        error: 'Unable to connect to alternate availability stream.',
+        error: SERVER_UNAVAILABLE_MESSAGE,
       }));
     }
   }
@@ -1288,10 +1373,11 @@ function processSseMessage(
       effectiveEvent === 'failed' ||
       effectiveEvent === 'failure'
     ) {
-      const errDetail = String(payload.message || payload.detail || payload.error || 'Search encountered an error');
+      const rawDetail = payload.message || payload.detail || payload.error;
+      const errDetail = sanitizeBackendError(rawDetail);
       updateState(searchKey, (prev) => ({
         status: prev.results.length > 0 ? 'completed' : 'error',
-        error: errDetail,
+        error: errDetail || SERVER_UNAVAILABLE_MESSAGE,
       }));
       return true; // Stop reading stream immediately!
     }

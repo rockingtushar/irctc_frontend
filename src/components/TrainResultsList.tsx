@@ -31,6 +31,8 @@ import {
   startAlternateAvailability,
   isWaitlistStatus,
 } from '../services/alternateAvailabilityService';
+import { normalizeApiError } from '../config/apiConfig';
+import { calculateTrainJourneyDates } from '../utils/dateUtils';
 import { TrainRouteModal } from './TrainRouteModal';
 
 interface TrainResultsListProps {
@@ -219,10 +221,10 @@ const TrainCard: React.FC<TrainCardProps> = ({
         if (err instanceof SessionExpiredError && onSessionExpired) {
           onSessionExpired(train.trainNumber, classCode);
         }
-        const errorMsg =
-          err instanceof Error
-            ? err.message
-            : 'Unable to fetch availability for this coach class.';
+        const errorMsg = normalizeApiError(
+          err,
+          'Unable to fetch availability for this coach class.'
+        );
         setClassStates((prev) => ({
           ...prev,
           [classCode]: {
@@ -324,6 +326,16 @@ const TrainCard: React.FC<TrainCardProps> = ({
 
   const isExpanded = Boolean(expandedClass);
 
+  // Compute exact source departure and destination arrival dates
+  const journeyDates = calculateTrainJourneyDates({
+    journeyDate: journeyDate || train.journeyDate,
+    departureDate: (train as any).departureDate,
+    arrivalDate: (train as any).arrivalDate,
+    departureTime: train.departureTime,
+    arrivalTime: train.arrivalTime,
+    duration: train.duration,
+  });
+
   return (
     <div
       id={`train-card-${train.trainNumber}`}
@@ -415,13 +427,17 @@ const TrainCard: React.FC<TrainCardProps> = ({
       <div className="bg-slate-50/90 rounded-2xl p-3 sm:p-4 border border-slate-100">
         <div className="flex items-center justify-between gap-2">
           {/* Departure */}
-          <div className="text-left shrink-0 min-w-[70px] sm:min-w-[90px]">
+          <div className="text-left shrink-0 min-w-[75px] sm:min-w-[95px]">
             <div className="text-lg sm:text-2xl font-extrabold text-slate-900 font-mono tracking-tight leading-none">
               {train.departureTime}
             </div>
             <div className="flex items-center gap-1 text-xs sm:text-sm font-bold text-slate-700 mt-1">
               <MapPin className="w-3 h-3 text-orange-500 shrink-0" />
               <span className="truncate">{train.fromStnCode}</span>
+            </div>
+            <div className="text-[11px] sm:text-xs font-semibold text-slate-500 mt-1 flex items-center gap-1">
+              <Calendar className="w-3 h-3 text-orange-500/80 shrink-0" />
+              <span className="whitespace-nowrap">{journeyDates.departureDateStr}</span>
             </div>
           </div>
 
@@ -458,13 +474,22 @@ const TrainCard: React.FC<TrainCardProps> = ({
           </div>
 
           {/* Arrival */}
-          <div className="text-right shrink-0 min-w-[70px] sm:min-w-[90px]">
+          <div className="text-right shrink-0 min-w-[75px] sm:min-w-[95px]">
             <div className="text-lg sm:text-2xl font-extrabold text-slate-900 font-mono tracking-tight leading-none">
               {train.arrivalTime}
             </div>
             <div className="flex items-center justify-end gap-1 text-xs sm:text-sm font-bold text-slate-700 mt-1">
               <MapPin className="w-3 h-3 text-emerald-500 shrink-0" />
               <span className="truncate">{train.toStnCode}</span>
+            </div>
+            <div className="flex items-center justify-end gap-1 text-[11px] sm:text-xs font-semibold text-slate-500 mt-1 flex-wrap">
+              <Calendar className="w-3 h-3 text-emerald-500/80 shrink-0" />
+              <span className="whitespace-nowrap">{journeyDates.arrivalDateStr}</span>
+              {journeyDates.dayOffsetLabel && (
+                <span className="text-[9px] sm:text-[10px] font-bold text-emerald-800 bg-emerald-100/90 px-1 py-0.2 rounded font-mono">
+                  {journeyDates.dayOffsetLabel}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -686,10 +711,7 @@ export const TrainResultsList: React.FC<TrainResultsListProps> = ({
       setRouteError(null);
     } catch (err: unknown) {
       console.error('[TrainResultsList] Route fetch error:', err);
-      const rawMsg = err instanceof Error && err.message ? err.message : '';
-      const msg = rawMsg.includes('Failed to fetch') || rawMsg.includes('NetworkError')
-        ? 'Live train route server is taking longer than usual. Please tap Retry.'
-        : rawMsg || 'Unable to load train route. Please try again.';
+      const msg = normalizeApiError(err, 'Unable to load train route. Please try again.');
       setRouteError(msg);
       setIsRouteLoading(false);
     }
@@ -707,10 +729,7 @@ export const TrainResultsList: React.FC<TrainResultsListProps> = ({
       setIsRouteLoading(false);
       setRouteError(null);
     } catch (err: unknown) {
-      const rawMsg = err instanceof Error && err.message ? err.message : '';
-      const msg = rawMsg.includes('Failed to fetch') || rawMsg.includes('NetworkError')
-        ? 'Live train route server is taking longer than usual. Please tap Retry.'
-        : rawMsg || 'Unable to load train route. Please try again.';
+      const msg = normalizeApiError(err, 'Unable to load train route. Please try again.');
       setRouteError(msg);
       setIsRouteLoading(false);
     }

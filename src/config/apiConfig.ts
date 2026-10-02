@@ -120,3 +120,239 @@ export function getCandidateApiUrls(endpointPath: string): string[] {
 
   return candidates;
 }
+
+/**
+ * Standard user-facing messages for centralized error handling
+ */
+export const SERVER_UNAVAILABLE_MESSAGE = 'Server is temporarily unavailable. Please try again in a moment.';
+export const SERVER_TIMEOUT_MESSAGE = 'Server is taking too long to respond. Please try again.';
+export const SERVER_GENERIC_ERROR_MESSAGE = 'Unable to process request at this moment. Please try again.';
+
+/**
+ * Checks whether an error represents a network connection failure (server unreachable, DNS, offline, connection refused).
+ */
+export function isNetworkOrConnectionError(err: unknown): boolean {
+  if (!err) return false;
+  if (typeof err === 'object' && err !== null && 'status' in err && (err as { status: number }).status === 0) {
+    return true;
+  }
+  const str = (err instanceof Error ? `${err.name} ${err.message}` : String(err)).toLowerCase();
+  return (
+    str.includes('failed to fetch') ||
+    str.includes('networkerror') ||
+    str.includes('network error') ||
+    str.includes('err_network') ||
+    str.includes('err_connection') ||
+    str.includes('econnrefused') ||
+    str.includes('enotfound') ||
+    str.includes('net::err') ||
+    str.includes('load failed') ||
+    str.includes('offline') ||
+    str.includes('unreachable')
+  );
+}
+
+/**
+ * Checks whether an error represents a client or server request timeout.
+ */
+export function isTimeoutError(err: unknown): boolean {
+  if (!err) return false;
+  if (err instanceof Error && err.name === 'AbortError') {
+    return true;
+  }
+  const str = (err instanceof Error ? `${err.name} ${err.message}` : String(err)).toLowerCase();
+  return (
+    str.includes('aborted') ||
+    str.includes('timeout') ||
+    str.includes('timed out') ||
+    str.includes('etimedout') ||
+    str.includes('err_timeout')
+  );
+}
+
+/**
+ * Checks whether an error message contains raw technical details, stack traces, URLs, or internal exceptions.
+ */
+export function isRawTechnicalMessage(str: string): boolean {
+  if (!str) return false;
+
+  // URLs (never expose URLs to users)
+  if (/https?:\/\/[^\s"'<>]+/i.test(str)) return true;
+  if (/\b(localhost|127\.0\.0\.1|0\.0\.0\.0):\d+/i.test(str)) return true;
+  if (/\b[a-zA-Z0-9-]+\.(onrender\.com|run\.app|vercel\.app|herokuapp\.com)/i.test(str)) return true;
+
+  // Stack traces & Python exceptions
+  if (/traceback \(most recent call last\)/i.test(str)) return true;
+  if (/file\s+["'].*["'],\s+line\s+\d+/i.test(str)) return true;
+  if (/(KeyError|ValueError|TypeError|AttributeError|RuntimeError|HTTPException|JSONDecodeError|ZeroDivisionError|IndexError|NameError|ImportError|SyntaxError|ConnectionError|ConnectionRefusedError):\s*/i.test(str)) return true;
+
+  // Database & internal backend infrastructure
+  if (/(psycopg|sqlalchemy|postgres|OperationalError|IntegrityError|duplicate key value|pg_trgm)/i.test(str)) return true;
+  if (/(upstream connect error|Cloud Run error|Cloudflare|502 Bad Gateway|503 Service Unavailable|504 Gateway Time-out|500 Internal Server Error)/i.test(str)) return true;
+  if (/(<html|<!DOCTYPE|<body|<div)/i.test(str)) return true;
+
+  return false;
+}
+
+/**
+ * Strips URLs and sensitive server strings from any text.
+ */
+export function stripTechnicalDetails(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/https?:\/\/[^\s"'<>]+/gi, '')
+    .replace(/\b(localhost|127\.0\.0\.1|0\.0\.0\.0):\d+/gi, '')
+    .replace(/\b[a-zA-Z0-9-]+\.(onrender\.com|run\.app|vercel\.app)/gi, '')
+    .trim();
+}
+
+/**
+ * Centralized error sanitization function.
+ * Ensures user-facing error messages are clean, safe, and never expose backend URLs or stack traces.
+ */
+export function sanitizeApiErrorMessage(
+  errorOrMessage: unknown,
+  fallbackMessage = SERVER_GENERIC_ERROR_MESSAGE
+): string {
+  if (!errorOrMessage) {
+    return fallbackMessage;
+  }
+
+  // 1. Timeout Check
+  if (isTimeoutError(errorOrMessage)) {
+    return SERVER_TIMEOUT_MESSAGE;
+  }
+
+  // 2. Network / Connection Unreachable Check
+  if (isNetworkOrConnectionError(errorOrMessage)) {
+    return SERVER_UNAVAILABLE_MESSAGE;
+  }
+
+  // 3. Extract raw string
+  let rawStr = '';
+  if (errorOrMessage instanceof Error) {
+    rawStr = errorOrMessage.message;
+  } else if (typeof errorOrMessage === 'string') {
+    rawStr = errorOrMessage;
+  } else if (typeof errorOrMessage === 'object' && errorOrMessage !== null) {
+    const obj = errorOrMessage as Record<string, unknown>;
+    if (typeof obj.detail === 'string') {
+      rawStr = obj.detail;
+    } else if (typeof obj.message === 'string') {
+      rawStr = obj.message;
+    } else if (typeof obj.error === 'string') {
+      rawStr = obj.error;
+    } else {
+      rawStr = JSON.stringify(errorOrMessage);
+    }
+  } else {
+    rawStr = String(errorOrMessage);
+  }
+
+  rawStr = rawStr.trim();
+
+  // If raw string matches network or timeout text
+  if (isNetworkOrConnectionError(rawStr)) {
+    return SERVER_UNAVAILABLE_MESSAGE;
+  }
+  if (isTimeoutError(rawStr)) {
+    return SERVER_TIMEOUT_MESSAGE;
+  }
+
+  // 4. Raw technical error or stack trace detected -> sanitize
+  if (isRawTechnicalMessage(rawStr)) {
+    // If it's a gateway or server failure, return server unavailable message
+    if (/502|503|504|Bad Gateway|Service Unavailable|Gateway Time-out|ConnectionRefused/i.test(rawStr)) {
+      return SERVER_UNAVAILABLE_MESSAGE;
+    }
+    return fallbackMessage;
+  }
+
+  // 5. Clean up any accidental URL residues
+  const cleaned = stripTechnicalDetails(rawStr);
+  if (!cleaned || cleaned.length < 3) {
+    return fallbackMessage;
+  }
+
+  return cleaned;
+}
+
+/**
+ * Backward-compatible alias for sanitizeApiErrorMessage
+ */
+export const sanitizeBackendError = (
+  errorOrMessage: unknown,
+  _status?: number,
+  fallbackMessage?: string
+): string => sanitizeApiErrorMessage(errorOrMessage, fallbackMessage);
+
+export const normalizeApiError = (
+  err: unknown,
+  fallback?: string
+): string => sanitizeApiErrorMessage(err, fallback);
+
+/**
+ * Centralized HTTP response error parser.
+ * Safely parses response JSON body (checking detail, message, error) and applies sanitization.
+ */
+export function parseHttpResponseError(
+  status: number,
+  body: unknown,
+  fallbackMessage?: string
+): string {
+  // 502 / 503 / 504 Gateway errors:
+  if (status === 502 || status === 503 || status === 504) {
+    // Check if body has a custom safe detail
+    if (body && typeof body === 'object') {
+      const detail = (body as Record<string, unknown>).detail;
+      if (typeof detail === 'string' && detail.trim() && !isRawTechnicalMessage(detail)) {
+        return detail.trim();
+      }
+    }
+    return SERVER_UNAVAILABLE_MESSAGE;
+  }
+
+  // 408 Timeout:
+  if (status === 408) {
+    return SERVER_TIMEOUT_MESSAGE;
+  }
+
+  if (body && typeof body === 'object') {
+    const obj = body as Record<string, unknown>;
+
+    // FastAPI 422 validation error handling
+    if (status === 422 && Array.isArray(obj.detail)) {
+      const items = obj.detail as Array<{ loc?: string[]; msg?: string }>;
+      const fieldMsgs = items
+        .filter((d) => d && typeof d.msg === 'string')
+        .map((d) => {
+          const field = d.loc?.slice(-1)[0] || 'parameter';
+          return `${field}: ${d.msg}`;
+        });
+      if (fieldMsgs.length > 0) {
+        return `Validation Error: ${fieldMsgs.join(', ')}`;
+      }
+      return 'Invalid request parameters. Please verify your input.';
+    }
+
+    if (typeof obj.detail === 'string' && obj.detail.trim()) {
+      return sanitizeApiErrorMessage(obj.detail, fallbackMessage);
+    }
+    if (typeof obj.message === 'string' && obj.message.trim()) {
+      return sanitizeApiErrorMessage(obj.message, fallbackMessage);
+    }
+    if (typeof obj.error === 'string' && obj.error.trim()) {
+      return sanitizeApiErrorMessage(obj.error, fallbackMessage);
+    }
+  }
+
+  if (typeof body === 'string' && body.trim()) {
+    return sanitizeApiErrorMessage(body, fallbackMessage);
+  }
+
+  if (status === 500) {
+    return fallbackMessage || SERVER_GENERIC_ERROR_MESSAGE;
+  }
+
+  return fallbackMessage || `Server returned HTTP ${status}. Please try again.`;
+}

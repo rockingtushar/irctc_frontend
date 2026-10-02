@@ -1,4 +1,11 @@
-import { getCandidateApiUrls } from '../config/apiConfig';
+import {
+  getCandidateApiUrls,
+  SERVER_UNAVAILABLE_MESSAGE,
+  SERVER_TIMEOUT_MESSAGE,
+  isNetworkOrConnectionError,
+  isTimeoutError,
+  sanitizeApiErrorMessage,
+} from '../config/apiConfig';
 
 export interface FeedbackRequestBody {
   message: string;
@@ -14,7 +21,7 @@ export interface FeedbackResponse {
 export class FeedbackApiError extends Error {
   status?: number;
   constructor(message: string, status?: number) {
-    super(message);
+    super(sanitizeApiErrorMessage(message));
     this.name = 'FeedbackApiError';
     this.status = status;
   }
@@ -86,13 +93,17 @@ export async function submitFeedback(payload: FeedbackRequestBody): Promise<Feed
         message: data?.message || 'Thank you for your feedback!',
       };
     } catch (err: unknown) {
-      if (err instanceof FeedbackApiError) {
+      if (isTimeoutError(err)) {
+        lastError = new FeedbackApiError(SERVER_TIMEOUT_MESSAGE, 408);
+      } else if (isNetworkOrConnectionError(err)) {
+        lastError = new FeedbackApiError(SERVER_UNAVAILABLE_MESSAGE, 0);
+      } else if (err instanceof FeedbackApiError) {
         lastError = err;
       } else {
-        lastError = new FeedbackApiError('Unable to send feedback right now. Please try again.');
+        lastError = new FeedbackApiError(sanitizeApiErrorMessage(err, 'Unable to send feedback right now. Please try again.'));
       }
     }
   }
 
-  throw lastError || new FeedbackApiError('Unable to send feedback right now. Please try again.');
+  throw lastError || new FeedbackApiError(SERVER_UNAVAILABLE_MESSAGE);
 }

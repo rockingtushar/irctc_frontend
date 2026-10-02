@@ -19,6 +19,7 @@ import {
   PnrSessionExpiredError,
   PnrApiError,
 } from '../../services/pnrApi';
+import { normalizeApiError } from '../../config/apiConfig';
 
 interface PnrCaptchaModalProps {
   open: boolean;
@@ -73,16 +74,10 @@ export const PnrCaptchaModal: React.FC<PnrCaptchaModalProps> = ({
       setCaptchaImageUrl(fastImg);
     } catch (err: unknown) {
       console.warn('[PnrCaptchaModal] Init notice:', err);
-      let msg = 'Unable to connect to Railway server. Please click "Try reloading CAPTCHA" below.';
-      if (err instanceof Error && err.message) {
-        if (err.name === 'AbortError' || err.message.toLowerCase().includes('abort')) {
-          msg = 'Connection to Indian Railways server timed out. Please click below to reload.';
-        } else if (err.message.includes('404') || err.message.toLowerCase().includes('not found')) {
-          msg = 'Railway gateway session expired. Please click below to reload a fresh CAPTCHA.';
-        } else {
-          msg = err.message;
-        }
-      }
+      const msg = normalizeApiError(
+        err,
+        'Unable to connect to Railway server. Please click "Try reloading CAPTCHA" below.'
+      );
       setErrorMessage(msg);
     } finally {
       setIsLoadingCaptcha(false);
@@ -140,7 +135,7 @@ export const PnrCaptchaModal: React.FC<PnrCaptchaModalProps> = ({
         setErrorMessage('Session expired. Loading fresh security CAPTCHA...');
         await initCaptcha();
       } else {
-        const msg = err instanceof Error ? err.message : 'Failed to refresh CAPTCHA.';
+        const msg = normalizeApiError(err, 'Failed to refresh CAPTCHA.');
         setErrorMessage(msg);
       }
     } finally {
@@ -183,7 +178,7 @@ export const PnrCaptchaModal: React.FC<PnrCaptchaModalProps> = ({
         setErrorMessage('Session expired. Loading new CAPTCHA...');
         await initCaptcha();
       } else {
-        const msg = err instanceof Error && err.message ? err.message : 'Unable to fetch PNR status. Please try again.';
+        const msg = normalizeApiError(err, 'Unable to fetch PNR status. Please try again.');
         setErrorMessage(msg);
       }
     }

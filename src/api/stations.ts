@@ -1,6 +1,16 @@
 import { Station } from '../types/station';
 import { DEFAULT_MAJOR_STATIONS } from '../data/defaultStations';
-import { getApiBaseUrl, setApiBaseUrl, getCandidateApiUrls, API_URL_STORAGE_KEY } from '../config/apiConfig';
+import {
+  getApiBaseUrl,
+  setApiBaseUrl,
+  getCandidateApiUrls,
+  API_URL_STORAGE_KEY,
+  SERVER_UNAVAILABLE_MESSAGE,
+  SERVER_TIMEOUT_MESSAGE,
+  isNetworkOrConnectionError,
+  isTimeoutError,
+  sanitizeApiErrorMessage,
+} from '../config/apiConfig';
 
 export { getApiBaseUrl, setApiBaseUrl, API_URL_STORAGE_KEY };
 
@@ -69,19 +79,14 @@ export async function fetchAllStations(customBaseUrl?: string): Promise<Station[
     }
   }
 
-  // Friendly error message for cloud preview vs localhost
-  const baseUrl = customBaseUrl || getApiBaseUrl();
-  const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
-  const isTargetHttp = baseUrl.startsWith('http://');
-
-  if (isHttps && isTargetHttp) {
-    throw new Error(
-      `Cannot connect to "${baseUrl}" from HTTPS preview (browser blocks HTTP). Please provide an HTTPS backend URL or use the development proxy.`
-    );
-  }
-
   if (lastError) {
-    throw lastError;
+    if (isNetworkOrConnectionError(lastError)) {
+      throw new Error(SERVER_UNAVAILABLE_MESSAGE);
+    }
+    if (isTimeoutError(lastError)) {
+      throw new Error(SERVER_TIMEOUT_MESSAGE);
+    }
+    throw new Error(sanitizeApiErrorMessage(lastError, 'Unable to load stations list.'));
   }
 
   // If backend endpoint was 404 or empty, return default stations gracefully
