@@ -443,9 +443,14 @@ const TrainCard: React.FC<TrainCardProps> = ({
 
           {/* Duration & Route Line */}
           <div className="flex-1 flex flex-col items-center justify-center px-1 sm:px-4">
-            <div className="flex items-center gap-1 text-[11px] sm:text-xs font-semibold text-slate-500 mb-1">
+            <div className="flex items-center gap-1.5 text-[11px] sm:text-xs font-semibold text-slate-500 mb-1">
               <Clock className="w-3 h-3 text-slate-400 shrink-0" />
               <span>{train.duration}</span>
+              {journeyDates.dayOffsetLabel && (
+                <span className="text-[9px] sm:text-[10px] font-bold text-emerald-800 bg-emerald-100/90 border border-emerald-200/80 px-1.5 py-0.5 rounded font-mono">
+                  {journeyDates.dayOffsetLabel}
+                </span>
+              )}
             </div>
             <div className="w-full max-w-[160px] sm:max-w-[200px] flex items-center gap-1.5">
               <div className="h-0.5 flex-1 bg-gradient-to-r from-orange-400 to-amber-400 relative">
@@ -482,14 +487,9 @@ const TrainCard: React.FC<TrainCardProps> = ({
               <MapPin className="w-3 h-3 text-emerald-500 shrink-0" />
               <span className="truncate">{train.toStnCode}</span>
             </div>
-            <div className="flex items-center justify-end gap-1 text-[11px] sm:text-xs font-semibold text-slate-500 mt-1 flex-wrap">
+            <div className="flex items-center justify-end gap-1 text-[11px] sm:text-xs font-semibold text-slate-500 mt-1">
               <Calendar className="w-3 h-3 text-emerald-500/80 shrink-0" />
               <span className="whitespace-nowrap">{journeyDates.arrivalDateStr}</span>
-              {journeyDates.dayOffsetLabel && (
-                <span className="text-[9px] sm:text-[10px] font-bold text-emerald-800 bg-emerald-100/90 px-1 py-0.2 rounded font-mono">
-                  {journeyDates.dayOffsetLabel}
-                </span>
-              )}
             </div>
           </div>
         </div>
