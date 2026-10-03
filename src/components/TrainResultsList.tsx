@@ -15,8 +15,9 @@ import {
   Loader2,
   Radio,
   Route,
+  RefreshCw,
 } from 'lucide-react';
-import { ClassAvailabilitySection, sortRailwayClasses } from './ClassAvailabilitySection';
+import { ClassAvailabilitySection, sortRailwayClasses, formatRelativeTime } from './ClassAvailabilitySection';
 import { fetchTrainAvailability, getSavedTrainSessionId, toStandardYYYYMMDD, SessionExpiredError } from '../api/trains';
 import { RunningStatusData } from '../types/runningStatus';
 import {
@@ -46,6 +47,7 @@ interface TrainResultsListProps {
   onNavigateToRunningStatus?: (trainNo: string, date?: string) => void;
   onSessionExpired?: (trainNumber: string, classCode: string) => void;
   autoFetchTarget?: { trainNumber: string; classCode: string } | null;
+  onRefreshSearch?: () => void;
 }
 
 const daysMeta = [
@@ -166,6 +168,7 @@ const TrainCard: React.FC<TrainCardProps> = ({
           : typeof train.trainType === 'string'
           ? train.trainType
           : '',
+        force_refresh: forceRefresh,
       };
 
       const result = await fetchTrainAvailability(payload);
@@ -635,7 +638,11 @@ export const TrainResultsList: React.FC<TrainResultsListProps> = ({
   onNavigateToRunningStatus,
   onSessionExpired,
   autoFetchTarget,
+  onRefreshSearch,
 }) => {
+  // Check if trains list has cached / fetched_at metadata attached
+  const fetchedAtMeta = (trains as any)?.fetched_at;
+  const isCachedMeta = (trains as any)?.cached === true;
   // Track which train and class is currently expanded across the whole list (single accordion)
   const [activeSelection, setActiveSelection] = useState<{
     trainNumber: string;
@@ -783,14 +790,36 @@ export const TrainResultsList: React.FC<TrainResultsListProps> = ({
   return (
     <div className="w-full space-y-4" id="train-results-container">
       {/* Results Header Banner */}
-      <div className="flex items-center justify-between px-2">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between px-2 flex-wrap gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
           <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wider">
             Available Trains ({trains.length})
           </h2>
+          {fetchedAtMeta && (
+            <span className="text-[10px] font-medium text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full flex items-center gap-1 shadow-2xs">
+              <Clock className="w-3 h-3 text-slate-400" />
+              <span>{formatRelativeTime(fetchedAtMeta)}</span>
+            </span>
+          )}
+          {onRefreshSearch && (
+            <button
+              type="button"
+              onClick={onRefreshSearch}
+              title="Refresh for the latest train data"
+              aria-label="Refresh train search"
+              className="p-1 rounded-md text-slate-400 hover:text-orange-600 hover:bg-orange-50 border border-slate-200 hover:border-orange-200 transition-colors cursor-pointer flex items-center justify-center shadow-2xs"
+            >
+              <RefreshCw className="w-3 h-3" />
+            </button>
+          )}
         </div>
-        <div className="flex items-center gap-1 text-xs text-slate-500 font-medium">
+        <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+          {isCachedMeta && (
+            <span className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-md">
+              Cached
+            </span>
+          )}
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
           <span>Official IRCTC Schedule</span>
         </div>

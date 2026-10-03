@@ -644,9 +644,12 @@ export function stopAlternateAvailability(searchKey: string): void {
   const current = getAlternateSearchState(searchKey);
   const jobId = current?.jobId;
   const isRunning = current && (current.status === 'starting' || current.status === 'searching');
+  const isShared = current?.shared === true;
 
-  // 2. Fire-and-forget backend cancellation if jobId exists and status is starting or searching
-  if (jobId && isRunning) {
+  // 2. Fire-and-forget backend cancellation ONLY if jobId exists, status is active, AND job is NOT shared!
+  // If User B is watching User A's shared job, User B clicking Stop should only disconnect
+  // their own client connection, and NOT terminate the server task for User A.
+  if (jobId && isRunning && !isShared) {
     const cancelCandidateUrls = getCandidateApiUrls(
       `/api/trains/alternate/cancel/${encodeURIComponent(jobId)}`
     );
@@ -727,6 +730,7 @@ export async function startAlternateAvailability(params: {
   trainType?: string;
   initialStatus?: string;
   sessionId?: string;
+  forceRefresh?: boolean;
 }): Promise<AlternateSearchState> {
   const cleanFrom = (params.fromCode || '').trim().toUpperCase();
   const cleanTo = (params.toCode || '').trim().toUpperCase();
@@ -753,9 +757,10 @@ export async function startAlternateAvailability(params: {
   }
 
   // 1. Guard against duplicate search: check in-memory cache
-  // If search was previously cancelled, allow a fresh search to start
+  // If forceRefresh is requested, explicitly bypass in-memory cache
   const existing = getAlternateSearchState(searchKey);
   if (
+    !params.forceRefresh &&
     existing &&
     (existing.status === 'starting' ||
       existing.status === 'searching' ||
@@ -765,12 +770,27 @@ export async function startAlternateAvailability(params: {
     return existing;
   }
 
+  // If force-refreshing and a stream controller was active, abort it
+  if (params.forceRefresh) {
+    const activeCtrl = activeStreamControllers.get(searchKey);
+    if (activeCtrl) {
+      try {
+        activeCtrl.abort();
+      } catch {
+        // ignore
+      }
+      activeStreamControllers.delete(searchKey);
+    }
+  }
+
   // 2. Initialize starting state in memory (fresh search starts with empty results)
   const initial = updateState(searchKey, () => ({
     status: 'starting',
     error: null,
     startedAt: Date.now(),
-    results: [],
+    results: params.forceRefresh ? [] : existing?.results || [],
+    cached: undefined,
+    shared: undefined,
   }));
 
   // Execute background job (asynchronous & non-blocking)
@@ -779,6 +799,15 @@ export async function startAlternateAvailability(params: {
   });
 
   return initial;
+}
+
+interface StartJobResult {
+  isCacheHit?: boolean;
+  jobId?: string | null;
+  baseUrl?: string;
+  shared?: boolean;
+  streamUrl?: string;
+  statusUrl?: string;
 }
 
 /**
@@ -796,6 +825,7 @@ async function runAlternateJobInBackground(
     trainType?: string;
     initialStatus?: string;
     sessionId?: string;
+    forceRefresh?: boolean;
   }
 ): Promise<void> {
   let baseSessionId = params.sessionId || getSavedTrainSessionId() || '';
@@ -833,7 +863,7 @@ async function runAlternateJobInBackground(
   let successfulBaseUrl = '';
   let lastStartError: Error | null = null;
 
-  const tryStartJob = async (sessionIdToUse: string): Promise<{ jobId: string; baseUrl: string } | null> => {
+  const tryStartJob = async (sessionIdToUse: string): Promise<StartJobResult | null> => {
     if (!sessionIdToUse) return null;
 
     const payload: AlternateAvailabilityRequest = {
@@ -846,6 +876,7 @@ async function runAlternateJobInBackground(
       quota: cleanQuota,
       train_type: params.trainType || null,
       initial_status: params.initialStatus || null,
+      force_refresh: params.forceRefresh ?? false,
     };
 
     for (const url of startEndpoints) {
@@ -868,12 +899,79 @@ async function runAlternateJobInBackground(
 
         if (res.ok) {
           const data = (await res.json()) as Record<string, unknown>;
+
+          // CASE A: REDIS CACHE HIT (data.cached === true or status is completed with results)
+          if (data.cached === true || (data.status === 'completed' && Array.isArray(data.results))) {
+            const rawResults = Array.isArray(data.results) ? data.results : [];
+            const normalizedResults: AlternateResultItem[] = [];
+            const seenFp = new Set<string>();
+
+            const fallbackParams = {
+              trainNumber: cleanTrainNumber,
+              class: cleanClass,
+              quota: cleanQuota,
+              journeyDate: cleanJourneyDate,
+            };
+
+            for (const item of rawResults) {
+              if (item && typeof item === 'object') {
+                const norm = normalizeAlternateResult(item as Record<string, unknown>, fallbackParams);
+                const fp = generateResultFingerprint(norm);
+                if (!seenFp.has(fp)) {
+                  seenFp.add(fp);
+                  normalizedResults.push(norm);
+                }
+              }
+            }
+
+            const checked = typeof data.checked === 'number' ? data.checked : undefined;
+            const total = typeof data.total === 'number' ? data.total : undefined;
+            const found = typeof data.found === 'number' ? data.found : normalizedResults.length;
+            const errors = typeof data.errors === 'number' ? data.errors : 0;
+            const fetchedAt =
+              typeof data.fetched_at === 'string'
+                ? data.fetched_at
+                : typeof data.fetchedAt === 'string'
+                ? data.fetchedAt
+                : new Date().toISOString();
+
+            updateState(searchKey, () => ({
+              status: 'completed',
+              cached: true,
+              shared: false,
+              jobId: undefined,
+              results: normalizedResults,
+              fetchedAt,
+              checked,
+              total,
+              found,
+              errors,
+              progress:
+                typeof total === 'number' && total > 0
+                  ? {
+                      checked: checked ?? total,
+                      total,
+                      percent: 100,
+                      remaining: 0,
+                    }
+                  : undefined,
+              error: null,
+            }));
+
+            console.log(
+              `[AlternateAvailabilityService] Redis cache hit for ${searchKey}: ${normalizedResults.length} alternatives, fetchedAt: ${fetchedAt}`
+            );
+            return { isCacheHit: true };
+          }
+
+          // CASE B & C: SHARED RUNNING JOB OR NEW LIVE JOB
           const receivedJobId =
             typeof data.job_id === 'string'
               ? data.job_id
               : typeof data.jobId === 'string'
               ? data.jobId
               : null;
+
           if (receivedJobId) {
             let matchedBase = '';
             if (url.startsWith('http://') || url.startsWith('https://')) {
@@ -883,13 +981,25 @@ async function runAlternateJobInBackground(
                 matchedBase = '';
               }
             }
-            return { jobId: receivedJobId, baseUrl: matchedBase };
+
+            const isShared = data.shared === true;
+            const streamUrl = typeof data.stream_url === 'string' ? data.stream_url : undefined;
+            const statusUrl = typeof data.status_url === 'string' ? data.status_url : undefined;
+
+            return {
+              isCacheHit: false,
+              jobId: receivedJobId,
+              baseUrl: matchedBase,
+              shared: isShared,
+              streamUrl,
+              statusUrl,
+            };
           }
         } else {
           const errBody = await res.json().catch(() => null);
           const msg = errBody?.detail || errBody?.message || res.statusText;
           lastStartError = new Error(`HTTP ${res.status}: ${typeof msg === 'string' ? msg : JSON.stringify(msg)}`);
-          
+
           // If session expired (401 / 404 / 422), return null to trigger retry with fresh session
           if (res.status === 401 || res.status === 404 || (res.status === 422 && String(msg).includes('session_id'))) {
             return null;
@@ -907,10 +1017,14 @@ async function runAlternateJobInBackground(
   };
 
   // 1st attempt with current session
-  const firstAttempt = await tryStartJob(baseSessionId);
-  if (firstAttempt) {
-    jobId = firstAttempt.jobId;
-    successfulBaseUrl = firstAttempt.baseUrl;
+  let startResult: StartJobResult | null = await tryStartJob(baseSessionId);
+  if (startResult?.isCacheHit) {
+    // Redis Cache Hit: Results already placed in state and completed. Done!
+    return;
+  }
+  if (startResult?.jobId) {
+    jobId = startResult.jobId;
+    successfulBaseUrl = startResult.baseUrl || '';
   }
 
   // If first attempt failed due to session expired or not found, automatically get fresh session and retry
@@ -920,10 +1034,13 @@ async function runAlternateJobInBackground(
       const freshCaptcha = await startCaptchaSession();
       if (freshCaptcha?.session_id) {
         baseSessionId = freshCaptcha.session_id;
-        const retryAttempt = await tryStartJob(baseSessionId);
-        if (retryAttempt) {
-          jobId = retryAttempt.jobId;
-          successfulBaseUrl = retryAttempt.baseUrl;
+        startResult = await tryStartJob(baseSessionId);
+        if (startResult?.isCacheHit) {
+          return;
+        }
+        if (startResult?.jobId) {
+          jobId = startResult.jobId;
+          successfulBaseUrl = startResult.baseUrl || '';
         }
       }
     } catch (sessionErr) {
@@ -941,10 +1058,14 @@ async function runAlternateJobInBackground(
     return;
   }
 
-  // Update state to 'searching'
+  // Update state to 'searching' with shared/stream metadata
   updateState(searchKey, (prev) => ({
     status: 'searching',
     jobId: jobId!,
+    shared: startResult?.shared === true,
+    cached: false,
+    streamUrl: startResult?.streamUrl,
+    statusUrl: startResult?.statusUrl,
     error: null,
   }));
 
@@ -970,13 +1091,21 @@ async function runAlternateJobInBackground(
     jobId!,
     fallbackParams,
     sseAbortCtrl.signal,
-    successfulBaseUrl
+    successfulBaseUrl,
+    startResult?.statusUrl
   ).catch((err) => {
     console.warn('[AlternateAvailabilityService] Status polling warning:', err);
   });
 
   // Launch SSE stream reader
-  await connectToAlternateSseStream(searchKey, jobId!, fallbackParams, sseAbortCtrl, successfulBaseUrl);
+  await connectToAlternateSseStream(
+    searchKey,
+    jobId!,
+    fallbackParams,
+    sseAbortCtrl,
+    successfulBaseUrl,
+    startResult?.streamUrl
+  );
 }
 
 /**
@@ -988,9 +1117,24 @@ async function pollAlternateJobStatus(
   jobId: string,
   fallbackParams: { trainNumber: string; class: string; quota: string; journeyDate: string },
   signal: AbortSignal,
-  baseUrl = ''
+  baseUrl = '',
+  statusUrlOverride?: string
 ): Promise<void> {
   const statusEndpoints: string[] = [];
+  if (statusUrlOverride) {
+    if (statusUrlOverride.startsWith('http://') || statusUrlOverride.startsWith('https://')) {
+      statusEndpoints.push(statusUrlOverride);
+    } else {
+      if (baseUrl) {
+        statusEndpoints.push(`${baseUrl}${statusUrlOverride.startsWith('/') ? '' : '/'}${statusUrlOverride}`);
+      }
+      for (const c of getCandidateApiUrls(statusUrlOverride)) {
+        if (!statusEndpoints.includes(c)) {
+          statusEndpoints.push(c);
+        }
+      }
+    }
+  }
   if (baseUrl) {
     statusEndpoints.push(`${baseUrl}/api/trains/alternate/status/${jobId}`);
   }
@@ -1133,9 +1277,24 @@ async function connectToAlternateSseStream(
   jobId: string,
   fallbackParams: { trainNumber: string; class: string; quota: string; journeyDate: string },
   abortCtrl: AbortController,
-  baseUrl = ''
+  baseUrl = '',
+  streamUrlOverride?: string
 ): Promise<void> {
   const streamEndpoints: string[] = [];
+  if (streamUrlOverride) {
+    if (streamUrlOverride.startsWith('http://') || streamUrlOverride.startsWith('https://')) {
+      streamEndpoints.push(streamUrlOverride);
+    } else {
+      if (baseUrl) {
+        streamEndpoints.push(`${baseUrl}${streamUrlOverride.startsWith('/') ? '' : '/'}${streamUrlOverride}`);
+      }
+      for (const c of getCandidateApiUrls(streamUrlOverride)) {
+        if (!streamEndpoints.includes(c)) {
+          streamEndpoints.push(c);
+        }
+      }
+    }
+  }
   if (baseUrl) {
     streamEndpoints.push(`${baseUrl}/api/trains/alternate/stream/${jobId}`);
   }

@@ -12,11 +12,23 @@ export interface AlternateAvailabilityRequest {
   quota?: string;       // e.g. "GN"
   train_type?: string | null;
   initial_status?: string | null;
+  force_refresh?: boolean;
 }
 
 export interface AlternateStartResponse {
   success: boolean;
-  job_id: string;
+  job_id: string | null;
+  cached?: boolean;
+  shared?: boolean;
+  status?: string;
+  stream_url?: string;
+  status_url?: string;
+  fetched_at?: string;
+  results?: AlternateResultItem[];
+  checked?: number;
+  total?: number;
+  found?: number;
+  errors?: number;
   message?: string;
   [key: string]: unknown;
 }
@@ -68,6 +80,15 @@ export interface AlternateSearchState {
   expiresAt: number;
   searchKey: string;
   progress?: AlternateSearchProgress;
+  cached?: boolean;
+  shared?: boolean;
+  fetchedAt?: string;
+  streamUrl?: string;
+  statusUrl?: string;
+  checked?: number;
+  total?: number;
+  found?: number;
+  errors?: number;
 }
 
 export type AlternateStateListener = (state: AlternateSearchState) => void;

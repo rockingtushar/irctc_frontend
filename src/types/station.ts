@@ -102,6 +102,7 @@ export interface TrainSearchRequestBody {
   journey_date: string;
   travel_class?: string;
   quota?: string;
+  force_refresh?: boolean;
 }
 
 export interface CaptchaStartResponse {
@@ -115,6 +116,9 @@ export interface CaptchaRefreshResponse {
 
 export interface TrainSearchResponse {
   trains: Train[];
+  cached?: boolean;
+  fetched_at?: string;
+  [key: string]: unknown;
 }
 
 /**
@@ -130,6 +134,7 @@ export interface TrainAvailabilityRequestBody {
   class_code?: string;
   quota: string;
   train_type?: string;
+  force_refresh?: boolean;
 }
 
 /**
@@ -161,6 +166,7 @@ export interface TrainAvailabilityData {
   totalFare?: number;
   baseFare?: number;
   fetchedAt?: string | number;
+  cached?: boolean;
   [key: string]: unknown;
 }
 

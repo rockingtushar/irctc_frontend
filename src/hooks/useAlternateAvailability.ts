@@ -99,7 +99,7 @@ export function useAlternateAvailability({
     trainType,
   ]);
 
-  const startSearch = () => {
+  const startSearch = (forceRefresh = false) => {
     return startAlternateAvailability({
       trainNumber,
       fromCode,
@@ -109,7 +109,12 @@ export function useAlternateAvailability({
       quota,
       trainType,
       initialStatus: initialStatus || undefined,
+      forceRefresh,
     });
+  };
+
+  const refreshSearch = () => {
+    return startSearch(true);
   };
 
   const stopSearch = useCallback(() => {
@@ -125,11 +130,15 @@ export function useAlternateAvailability({
     status: state.status,
     error: state.error,
     progress: state.progress,
+    cached: state.cached,
+    shared: state.shared,
+    fetchedAt: state.fetchedAt,
     isSearching: state.status === 'starting' || state.status === 'searching',
     isCompleted: state.status === 'completed',
     isCancelled: state.status === 'cancelled',
     isWL,
     startSearch,
+    refreshSearch,
     stopSearch,
   };
 }

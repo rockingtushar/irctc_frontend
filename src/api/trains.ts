@@ -239,7 +239,7 @@ export async function searchTrains(payload: TrainSearchRequestBody): Promise<Tra
   const cleanFromName = (payload.from_name || cleanFromCode).trim();
   const cleanToName = (payload.to_name || cleanToCode).trim();
 
-  const formattedPayload = {
+  const formattedPayload: Record<string, unknown> = {
     session_id: payload.session_id ? payload.session_id.trim() : '',
     captcha_answer: payload.captcha_answer ? payload.captcha_answer.trim() : null,
     from_code: cleanFromCode,
@@ -251,12 +251,17 @@ export async function searchTrains(payload: TrainSearchRequestBody): Promise<Tra
     quota: payload.quota || 'General (GN)',
   };
 
+  if (typeof payload.force_refresh === 'boolean') {
+    formattedPayload.force_refresh = payload.force_refresh;
+  }
+
   console.log('[searchTrains] Submitting live search request for route:', {
     from: formattedPayload.from_code,
     to: formattedPayload.to_code,
     date: formattedPayload.journey_date,
     has_session: !!formattedPayload.session_id,
     has_captcha: !!formattedPayload.captcha_answer,
+    force_refresh: formattedPayload.force_refresh,
   });
 
   let lastError: Error | null = null;
@@ -330,13 +335,20 @@ export async function searchTrains(payload: TrainSearchRequestBody): Promise<Tra
         }
 
         const data: TrainSearchResponse = await response.json();
-        console.log('[searchTrains] Successful response with trains:', data.trains?.length || 0);
+        console.log('[searchTrains] Successful response with trains:', data.trains?.length || 0, 'cached:', data.cached);
 
         // Ensure session persistence upon success
         if (payload.session_id) {
           saveTrainSessionId(payload.session_id);
         }
-        return data.trains || [];
+        const resultTrains = data.trains || [];
+        if (data.cached !== undefined) {
+          (resultTrains as any).cached = data.cached;
+        }
+        if (data.fetched_at !== undefined) {
+          (resultTrains as any).fetched_at = data.fetched_at;
+        }
+        return resultTrains;
       } catch (error: unknown) {
         clearTimeout(timeoutId);
         if (error instanceof InvalidCaptchaError || error instanceof SessionExpiredError) {
@@ -513,6 +525,13 @@ function normalizeAvailabilityResponse(
     avlWrapper.fetchedAt ||
     new Date().toISOString();
 
+  const cached =
+    typeof rawJson.cached === 'boolean'
+      ? rawJson.cached
+      : typeof (dataWrapper as any)?.cached === 'boolean'
+      ? (dataWrapper as any).cached
+      : undefined;
+
   return {
     trainNumber: String(rawJson.trainNumber || rawJson.trainNo || dataWrapper?.trainNumber || avlWrapper.trainNo || payload.train_number),
     trainName: rawJson.trainName ? String(rawJson.trainName) : dataWrapper?.trainName ? String(dataWrapper.trainName) : avlWrapper.trainName ? String(avlWrapper.trainName) : undefined,
@@ -524,6 +543,7 @@ function normalizeAvailabilityResponse(
     totalFare,
     baseFare,
     fetchedAt: (fetchedAt as string | number),
+    cached,
     ...rawJson,
   };
 }
@@ -549,7 +569,7 @@ export async function fetchTrainAvailability(
   const cleanTrainType = payload.train_type || null;
   const cleanClass = String(payload.travel_class || payload.class_code || '').trim().toUpperCase();
 
-  const requestBody = {
+  const requestBody: Record<string, unknown> = {
     session_id: baseSessionId,
     train_number: cleanTrainNumber,
     from_code: cleanFromCode,
@@ -559,6 +579,10 @@ export async function fetchTrainAvailability(
     quota: cleanQuota,
     train_type: cleanTrainType,
   };
+
+  if (typeof payload.force_refresh === 'boolean') {
+    requestBody.force_refresh = payload.force_refresh;
+  }
 
   console.log('[fetchTrainAvailability] Submitting availability request payload:', requestBody);
 

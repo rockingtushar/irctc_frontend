@@ -14,11 +14,13 @@ import {
   ChevronUp,
   Info,
   X,
+  RefreshCw,
 } from 'lucide-react';
 import { useAlternateAvailability } from '../hooks/useAlternateAvailability';
 import { isWaitlistStatus } from '../services/alternateAvailabilityService';
 import { AlternateResultItem } from '../types/alternate';
 import { fetchTrainAvailability, getSavedTrainSessionId } from '../api/trains';
+import { formatRelativeTime } from './ClassAvailabilitySection';
 
 interface AlternateAvailabilityViewProps {
   trainNumber: string;
@@ -189,8 +191,12 @@ export const AlternateAvailabilityView: React.FC<AlternateAvailabilityViewProps>
     isCompleted,
     isCancelled,
     progress,
+    cached,
+    shared,
+    fetchedAt,
     stopSearch,
     startSearch,
+    refreshSearch,
   } = useAlternateAvailability({
     trainNumber,
     fromCode,
@@ -310,11 +316,15 @@ export const AlternateAvailabilityView: React.FC<AlternateAvailabilityViewProps>
             <p className="text-[10px] text-slate-500">
               {isWL
                 ? isSearching
-                  ? progress && progress.total > 0
+                  ? shared
+                    ? 'Connecting to shared search in background...'
+                    : progress && progress.total > 0
                     ? `Checking ${progress.checked}/${progress.total} combinations in background...`
                     : 'Searching seat alternatives in background...'
                   : results.length > 0
-                  ? 'Confirmed seat alternatives found for nearby stations/trains'
+                  ? cached && fetchedAt
+                    ? `Confirmed seat alternatives • ${formatRelativeTime(fetchedAt)}`
+                    : 'Confirmed seat alternatives found for nearby stations/trains'
                   : isCancelled
                   ? 'Search stopped by user'
                   : isCompleted
@@ -412,7 +422,9 @@ export const AlternateAvailabilityView: React.FC<AlternateAvailabilityViewProps>
                   <div className="flex items-center gap-1 text-amber-700 bg-amber-100/80 border border-amber-200 px-2 py-0.5 rounded-full">
                     <Loader2 className="w-3 h-3 animate-spin text-amber-600" />
                     <span>
-                      {progress && progress.total > 0
+                      {shared
+                        ? 'Connecting to shared search...'
+                        : progress && progress.total > 0
                         ? `Checking ${progress.checked}/${progress.total} (${progress.percent}%)`
                         : 'Checking alternatives...'}
                     </span>
@@ -435,9 +447,29 @@ export const AlternateAvailabilityView: React.FC<AlternateAvailabilityViewProps>
                   <span>Search stopped</span>
                 </div>
               ) : isCompleted ? (
-                <div className="flex items-center gap-1 text-emerald-700 bg-emerald-100/80 border border-emerald-200 px-2 py-0.5 rounded-full">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                  <span>Search completed</span>
+                <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1 text-emerald-700 bg-emerald-100/80 border border-emerald-200 px-2 py-0.5 rounded-full">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                    <span>{cached ? 'Cached' : 'Completed'}</span>
+                  </div>
+                  {fetchedAt && (
+                    <span className="hidden sm:flex items-center gap-1 text-[10px] text-slate-500 bg-white border border-amber-200 px-2 py-0.5 rounded-full shadow-2xs">
+                      <Clock className="w-3 h-3 text-slate-400" />
+                      <span>{formatRelativeTime(fetchedAt)}</span>
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      refreshSearch();
+                    }}
+                    title="Refresh latest alternate availability"
+                    aria-label="Refresh alternate availability"
+                    className="p-1 rounded-md text-slate-500 hover:text-amber-700 hover:bg-amber-100/80 border border-amber-200 transition-colors cursor-pointer flex items-center justify-center shrink-0 shadow-2xs"
+                  >
+                    <RefreshCw className="w-3 h-3 text-amber-600" />
+                  </button>
                 </div>
               ) : null}
             </div>

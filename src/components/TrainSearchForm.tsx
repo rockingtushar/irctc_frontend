@@ -248,7 +248,8 @@ export const TrainSearchForm: React.FC<TrainSearchFormProps> = ({
     targetTo: Station,
     targetDate: string = journeyDate,
     targetClass: string = travelClass,
-    targetQuota: string = quota
+    targetQuota: string = quota,
+    forceRefresh = false
   ) => {
     if (isDirectSearching) return;
     if (targetFrom.code.trim().toUpperCase() === targetTo.code.trim().toUpperCase()) {
@@ -304,6 +305,7 @@ export const TrainSearchForm: React.FC<TrainSearchFormProps> = ({
         journey_date: targetDate,
         travel_class: targetClass,
         quota: targetQuota,
+        force_refresh: forceRefresh,
       });
 
       handleSearchSuccess(resultTrains);
@@ -658,6 +660,11 @@ export const TrainSearchForm: React.FC<TrainSearchFormProps> = ({
               setIsCaptchaOpen(true);
             }}
             autoFetchTarget={pendingAvailRetry}
+            onRefreshSearch={
+              fromStation && toStation
+                ? () => executeSearch(fromStation, toStation, journeyDate, travelClass, quota, true)
+                : undefined
+            }
           />
         </div>
       ) : (
